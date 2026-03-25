@@ -1,0 +1,28 @@
+{
+  "dependencies": {
+    "argon2": "^0.43.0",
+    "axios": "^1.13.6",
+    "body-parser": "^1.20.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.2",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "multer": "^2.0.0",
+    "mysql2": "^3.12.0",
+    "nodemon": "^3.1.14",
+    "sequelize": "^6.37.5"
+  },
+  "name": "palma-backend-beasiswa-service",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "nodemon server.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": ""
+}
