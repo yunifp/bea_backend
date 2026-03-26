@@ -49,6 +49,11 @@ const {
   // updateKlusterBeasiswa,
   // updateKlusterBeasiswaBulk,
   updateKlusterBeasiswa,
+  getPendaftarByProvinsiLembagaSeleksi,
+  getCountByProvinsiProsesLembagaSeleksi,
+  getPendaftarPenetapanByProvinsi,
+  getPendaftarPenetapan,
+  getDetailPenetapan
 } = require("../controller");
 const {
   uploadConfigs,
@@ -111,6 +116,7 @@ router.post(
   uploadExcelHasilVerifikasiDinas
 );
 router.get("/count-by-provinsi/:beasiswaId", getCountByProvinsi);
+router.get("/count-by-provinsi-proses-lembaga-seleksi/:beasiswaId", getCountByProvinsiProsesLembagaSeleksi);
 router.get("/count-by-kabkota/:beasiswaId/:kodeProvinsi", getCountByKabkota);
 router.get("/count-data-by-kabkota/:beasiswaId/:kodeProvinsi", getCountDataProvByKabkota);
 router.get("/pendaftar-by-kabkota/:beasiswaId", getPendaftarByKabkota);
@@ -134,6 +140,7 @@ router.post("/:idTrxBeasiswa/submit-tag-provinsi", submitTagDinasProvinsiToDitje
 
 router.get("/:idTrxBeasiswa/sk-kabkota", getSkKabkotaByProvinsi)
 router.get("/pendaftar-by-provinsi/:beasiswaId", getPendaftarByProvinsi);
+router.get("/pendaftar-by-provinsi-lembaga-seleksi/:beasiswaId", getPendaftarByProvinsiLembagaSeleksi);
 router.put("/:idTrxBeasiswa/dokumen-verifikasi-dinas", updateDokumenVerifikasiDinas);
 
 router.put("/:idTrxBeasiswa/kluster", updateKlusterBeasiswa);
@@ -149,6 +156,14 @@ router.post(
 router.get(
   "/assignment/pendaftar", getPendaftarForAssignment,
 );
+
+router.get(
+  "/pendaftar-penetapan-by-provinsi/:beasiswaId",
+  getPendaftarPenetapanByProvinsi
+);
+router.get("/pendaftar-penetapan/:beasiswaId", getPendaftarPenetapan);
+router.get("/detail-penetapan/:idTrxBeasiswa", getDetailPenetapan);
+
 
 // router.get(
 //   "/:beasiswaId/ba-kabkota", getBaKabkotaByProvinsi,

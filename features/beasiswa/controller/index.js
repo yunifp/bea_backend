@@ -1459,9 +1459,12 @@ exports.updateFlowBeasiswa = async (req, res) => {
       updateData.flow = "Proses Wawancara & Test Akademik";
     } else if (id_flow == 72) {
       updateData.status_dari_verifikator_dinas = "Y";
-    } else if (13) {
+    } else if (id_flow == 13) {
       updateData.id_flow = 13;
       updateData.flow = "Lulus Administrasi - Pembagian Wilayah";
+    } else if (id_flow == 11) {
+      updateData.id_flow = 11;
+      updateData.flow = "Analisa dan Penelaahan";
     }
 
 
@@ -2267,6 +2270,35 @@ exports.getCountByProvinsi = async (req, res) => {
   }
 };
 
+exports.getCountByProvinsiProsesLembagaSeleksi = async (req, res) => {
+  try {
+    const { beasiswaId } = req.params;
+
+    const result = await TrxBeasiswa.findAll({
+      where: {
+        id_ref_beasiswa: beasiswaId,
+        id_flow: 10,
+        kode_dinas_provinsi: { [Op.ne]: null },
+      },
+      attributes: [
+        "kode_dinas_provinsi",
+        [
+          fn("COUNT", col("id_trx_beasiswa")), // ✅ Gunakan fn dan col yang sudah di-import
+          "jumlah_pendaftar",
+        ],
+      ],
+      group: ["kode_dinas_provinsi"],
+      order: [[literal("jumlah_pendaftar"), "DESC"]], // ✅ Gunakan literal yang sudah di-import
+      raw: true,
+    });
+
+    return successResponse(res, "Data berhasil dimuat", result);
+  } catch (error) {
+    console.log(error);
+    return errorResponse(res, "Internal Server Error");
+  }
+};
+
 // Get jumlah pendaftar per kabkota (hanya kode)
 exports.getCountByKabkota = async (req, res) => {
   try {
@@ -2871,9 +2903,6 @@ exports.getSkKabkotaByProvinsi = async (req, res) => {
   }
 };
 
-// Tambahkan fungsi ini ke dalam file beasiswaController.js
-// Letakkan setelah exports.getPendaftarByKabkota
-
 // Get list pendaftar berdasarkan provinsi
 exports.getPendaftarByProvinsi = async (req, res) => {
   try {
@@ -3348,6 +3377,264 @@ exports.updateKlusterBeasiswa = async (req, res) => {
     });
   } catch (error) {
     console.error("Error updateKlusterBeasiswa:", error);
+    return errorResponse(res, "Internal Server Error");
+  }
+};
+
+exports.getPendaftarByProvinsiLembagaSeleksi = async (req, res) => {
+  try {
+    const { beasiswaId } = req.params;
+    const { page = 1, search = "", kodeProvinsi } = req.query;
+
+    const limit = 10;
+    const offset = (page - 1) * limit;
+
+    const whereCondition = {
+      id_ref_beasiswa: beasiswaId,
+      kode_dinas_provinsi: kodeProvinsi,
+      id_flow: 10
+    };
+
+    if (search) {
+      whereCondition[Op.or] = [
+        { nama_lengkap: { [Op.like]: `%${search}%` } },
+        { email: { [Op.like]: `%${search}%` } },
+        { nik: { [Op.like]: `%${search}%` } },
+        { no_hp: { [Op.like]: `%${search}%` } },
+      ];
+    }
+
+    const { count, rows } = await TrxBeasiswa.findAndCountAll({
+      where: whereCondition,
+      attributes: [
+        "id_trx_beasiswa",
+        "nama_lengkap",
+        "nik",
+        "email",
+        "no_hp",
+        "tanggal_lahir",
+        "tempat_lahir",
+        "jenis_kelamin",
+        "tinggal_kode_prov",
+        "tinggal_kode_kab",
+        "tinggal_kode_kec",
+        "tinggal_kode_kel",
+        "tinggal_alamat",
+        "sekolah",
+        "jurusan",
+        "tahun_lulus",
+        "jalur",
+        "kode_dinas_provinsi",
+        "nama_dinas_provinsi",
+        "kode_dinas_kabkota",
+        "nama_dinas_kabkota",
+        "status_lulus_administrasi",
+        "status_dari_verifikator_dinas",
+        "verifikator_catatan",
+      ],
+      limit,
+      offset,
+      order: [["id_trx_beasiswa", "DESC"]],
+    });
+
+    const result = {
+      result: rows,
+      total: count,
+      total_pages: Math.ceil(count / limit),
+      current_page: parseInt(page),
+    };
+
+    return successResponse(res, "Data berhasil dimuat", result);
+  } catch (error) {
+    console.log(error);
+    return errorResponse(res, "Internal Server Error");
+  }
+};
+
+exports.getPendaftarPenetapanByProvinsi = async (req, res) => {
+  try {
+    const { beasiswaId } = req.params;
+    const { page = 1, search = "", kodeProvinsi } = req.query;
+
+    const limit = 10;
+    const offset = (parseInt(page) - 1) * limit;
+
+    const whereCondition = {
+      id_ref_beasiswa: beasiswaId,
+      kode_dinas_provinsi: kodeProvinsi,
+      id_flow: 11, // Analisa dan Penelaahan — hasil dari lembaga seleksi
+    };
+
+    if (search) {
+      whereCondition[Op.or] = [
+        { nama_lengkap: { [Op.like]: `%${search}%` } },
+        { email: { [Op.like]: `%${search}%` } },
+        { nik: { [Op.like]: `%${search}%` } },
+        { no_hp: { [Op.like]: `%${search}%` } },
+      ];
+    }
+
+    const { count, rows } = await TrxBeasiswa.findAndCountAll({
+      where: whereCondition,
+      attributes: [
+        "id_trx_beasiswa",
+        "kode_pendaftaran",
+        "nama_lengkap",
+        "nik",
+        "email",
+        "no_hp",
+        "tanggal_lahir",
+        "tempat_lahir",
+        "jenis_kelamin",
+        "jalur",
+        "kode_dinas_provinsi",
+        "nama_dinas_provinsi",
+        "kode_dinas_kabkota",
+        "nama_dinas_kabkota",
+        "status_lulus_administrasi",
+        "status_hasil_analisa_rasio", // <- kolom penting untuk penetapan
+        "status_dari_verifikator_dinas",
+        "verifikator_catatan",
+        "id_flow",
+        "flow",
+      ],
+      limit,
+      offset,
+      order: [["id_trx_beasiswa", "DESC"]],
+    });
+
+    return successResponse(res, "Data berhasil dimuat", {
+      result: rows,
+      total: count,
+      total_pages: Math.ceil(count / limit),
+      current_page: parseInt(page),
+    });
+  } catch (error) {
+    console.error("Error getPendaftarPenetapanByProvinsi:", error);
+    return errorResponse(res, "Internal Server Error");
+  }
+};
+
+exports.getPendaftarPenetapan = async (req, res) => {
+  try {
+    const { beasiswaId } = req.params;
+    const { page = 1, search = "" } = req.query;
+
+    const limit = 10;
+    const offset = (parseInt(page) - 1) * limit;
+
+    const whereCondition = {
+      id_ref_beasiswa: beasiswaId,
+      id_flow: 11,           // Analisa dan Penelaahan — hasil lembaga seleksi
+    };
+
+    if (search) {
+      whereCondition[Op.or] = [
+        { nama_lengkap: { [Op.like]: `%${search}%` } },
+        { nik: { [Op.like]: `%${search}%` } },
+        { no_hp: { [Op.like]: `%${search}%` } },
+        { email: { [Op.like]: `%${search}%` } },
+      ];
+    }
+
+    const { count, rows } = await TrxBeasiswa.findAndCountAll({
+      where: whereCondition,
+      attributes: [
+        "id_trx_beasiswa",
+        "kode_pendaftaran",
+        "nama_lengkap",
+        "nik",
+        "email",
+        "no_hp",
+        "jenis_kelamin",
+        "tanggal_lahir",
+        "jalur",
+        "id_jalur",
+        "kode_dinas_provinsi",
+        "nama_dinas_provinsi",
+        "kode_dinas_kabkota",
+        "nama_dinas_kabkota",
+        "status_lulus_administrasi",
+        "status_hasil_analisa_rasio",   // ← kolom kunci untuk penetapan
+        "id_kluster",
+        "nama_kluster",
+        "id_flow",
+        "flow",
+      ],
+      limit,
+      offset,
+      order: [
+        ["kode_dinas_provinsi", "ASC"],
+        ["kode_dinas_kabkota", "ASC"],
+        ["nama_lengkap", "ASC"],
+      ],
+    });
+
+    return successResponse(res, "Data berhasil dimuat", {
+      result: rows,
+      total: count,
+      total_pages: Math.ceil(count / limit),
+      current_page: parseInt(page),
+    });
+  } catch (error) {
+    console.error("Error getPendaftarPenetapan:", error);
+    return errorResponse(res, "Internal Server Error");
+  }
+};
+
+exports.getDetailPenetapan = async (req, res) => {
+  try {
+    const { idTrxBeasiswa } = req.params;
+
+    // ── Data utama beasiswa ───────────────────────────────────────────────
+    const trxBeasiswa = await TrxBeasiswa.findOne({
+      where: {
+        id_trx_beasiswa: idTrxBeasiswa,
+        id_flow: 11,  // Hanya boleh diakses jika sudah di tahap Analisa & Penelaahan
+      },
+    });
+
+    if (!trxBeasiswa) {
+      return failResponse(res, "Data tidak ditemukan atau belum berada pada tahap penetapan.", 404);
+    }
+
+    // ── Foto ─────────────────────────────────────────────────────────────
+    const beasiswaData = trxBeasiswa.toJSON();
+
+    if (beasiswaData.foto) beasiswaData.foto = getFileUrl(req, "foto", beasiswaData.foto);
+    if (beasiswaData.foto_depan) beasiswaData.foto_depan = getFileUrl(req, "foto_depan", beasiswaData.foto_depan);
+    if (beasiswaData.foto_samping_kiri) beasiswaData.foto_samping_kiri = getFileUrl(req, "foto_samping_kiri", beasiswaData.foto_samping_kiri);
+    if (beasiswaData.foto_samping_kanan) beasiswaData.foto_samping_kanan = getFileUrl(req, "foto_samping_kanan", beasiswaData.foto_samping_kanan);
+    if (beasiswaData.foto_belakang) beasiswaData.foto_belakang = getFileUrl(req, "foto_belakang", beasiswaData.foto_belakang);
+
+    // ── Pilihan prodi ────────────────────────────────────────────────────
+    const pilihanProdi = await TrxPilihanProgramStudi.findAll({
+      where: { id_trx_beasiswa: idTrxBeasiswa },
+      order: [["id", "ASC"]],
+    });
+    beasiswaData.pilihan_program_studi = pilihanProdi.map((p) => p.toJSON());
+
+    // ── Dokumen persyaratan ───────────────────────────────────────────────
+    const [dokUmum, dokKhusus, dokDinas] = await Promise.all([
+      TrxDokumenUmum.findAll({ where: { id_trx_beasiswa: idTrxBeasiswa } }),
+      TrxDokumenKhusus.findAll({ where: { id_trx_beasiswa: idTrxBeasiswa } }),
+      TrxDokumenDinasDaerah.findAll({ where: { id_trx_beasiswa: idTrxBeasiswa } }),
+    ]);
+
+    const mapDok = (list) =>
+      list.map((item) => ({
+        ...item.toJSON(),
+        file: item.file ? getFileUrl(req, "persyaratan", item.file) : null,
+      }));
+
+    return successResponse(res, "Data berhasil dimuat", {
+      data_beasiswa: beasiswaData,
+      persyaratan_umum: mapDok(dokUmum),
+      persyaratan_khusus: mapDok(dokKhusus),
+      persyaratan_dinas: mapDok(dokDinas),
+    });
+  } catch (error) {
+    console.error("Error getDetailPenetapan:", error);
     return errorResponse(res, "Internal Server Error");
   }
 };
