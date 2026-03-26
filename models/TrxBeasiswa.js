@@ -283,7 +283,18 @@ const TrxBeasiswa = sequelize.define(
       allowNull: true,
       defaultValue: "0",
     },
-
+    pt_final: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    prodi_final: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    urutan_ranking: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
 
     id_kluster: {
       type: DataTypes.TINYINT,

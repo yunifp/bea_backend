@@ -2,14 +2,61 @@ const { Op, fn, col } = require("sequelize");
 const { TrxBeasiswa } = require("../../../models");
 const { successResponse, errorResponse } = require("../../../common/response");
 
+// exports.getRekapProvinsi = async (req, res) => {
+//   try {
+//     // Rekap per provinsi
+//     const rekap = await TrxBeasiswa.findAll({
+//       where: { 
+//         id_flow: 9,
+//         kode_dinas_provinsi: { [Op.ne]: null }
+//       },
+//       attributes: [
+//         "kode_dinas_provinsi",
+//         "nama_dinas_provinsi",
+//         [fn("COUNT", col("id_trx_beasiswa")), "jumlah_pendaftar"]
+//       ],
+//       group: ["kode_dinas_provinsi", "nama_dinas_provinsi"],
+//       order: [["nama_dinas_provinsi", "ASC"]],
+//       raw: true
+//     });
+
+//     // Menghitung total kluster Afirmasi dan Reguler untuk halaman awal
+//     const totalAfirmasi = await TrxBeasiswa.count({
+//       where: { id_flow: 9, nama_kluster: "Afirmasi" }
+//     });
+    
+//     const totalReguler = await TrxBeasiswa.count({
+//       where: { id_flow: 9, nama_kluster: "Reguler" }
+//     });
+
+//     return successResponse(res, "Berhasil memuat rekapitulasi provinsi", {
+//       rekap,
+//       total_afirmasi: totalAfirmasi,
+//       total_reguler: totalReguler
+//     });
+//   } catch (error) {
+//     console.error("Error getRekapProvinsi:", error);
+//     return errorResponse(res, "Internal Server Error");
+//   }
+// };
 exports.getRekapProvinsi = async (req, res) => {
   try {
-    // Rekap per provinsi
+    const { kode_kabkota } = req.query; // Menerima query parameter filter
+
+    // Kondisi dasar (Flow 9 & Provinsi tidak null)
+    const whereCondition = { 
+      id_flow: 9,
+      kode_dinas_provinsi: { [Op.ne]: null }
+    };
+
+    // Jika filter kabupaten dipilih, tambahkan ke query where
+    if (kode_kabkota && kode_kabkota !== "all") {
+      whereCondition.kode_dinas_kabkota = kode_kabkota;
+    }
+
+    // 1. Rekap per provinsi berdasarkan filter
     const rekap = await TrxBeasiswa.findAll({
-      where: { 
-        id_flow: 9,
-        kode_dinas_provinsi: { [Op.ne]: null }
-      },
+      where: whereCondition,
       attributes: [
         "kode_dinas_provinsi",
         "nama_dinas_provinsi",
@@ -20,26 +67,35 @@ exports.getRekapProvinsi = async (req, res) => {
       raw: true
     });
 
-    // Menghitung total kluster Afirmasi dan Reguler untuk halaman awal
+    // 2. Menghitung total kluster Afirmasi dan Reguler berdasarkan filter
     const totalAfirmasi = await TrxBeasiswa.count({
-      where: { id_flow: 9, nama_kluster: "Afirmasi" }
+      where: { ...whereCondition, nama_kluster: "Afirmasi" }
     });
     
     const totalReguler = await TrxBeasiswa.count({
-      where: { id_flow: 9, nama_kluster: "Reguler" }
+      where: { ...whereCondition, nama_kluster: "Reguler" }
+    });
+
+    // 3. Ambil daftar semua kabupaten yang tersedia di flow 9 untuk dropdown filter (dipanggil tanpa filter whereCondition kabkota)
+    const listKabkota = await TrxBeasiswa.findAll({
+      where: { id_flow: 9, kode_dinas_kabkota: { [Op.ne]: null } },
+      attributes: ["kode_dinas_kabkota", "nama_dinas_kabkota"],
+      group: ["kode_dinas_kabkota", "nama_dinas_kabkota"],
+      order: [["nama_dinas_kabkota", "ASC"]],
+      raw: true
     });
 
     return successResponse(res, "Berhasil memuat rekapitulasi provinsi", {
       rekap,
       total_afirmasi: totalAfirmasi,
-      total_reguler: totalReguler
+      total_reguler: totalReguler,
+      list_kabkota: listKabkota // Kirim ke frontend untuk Dropdown
     });
   } catch (error) {
     console.error("Error getRekapProvinsi:", error);
     return errorResponse(res, "Internal Server Error");
   }
 };
-
 exports.getDetailProvinsi = async (req, res) => {
   try {
     const { kode_dinas_provinsi } = req.params;

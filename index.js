@@ -37,6 +37,24 @@ app.use(
   require("./features/persyaratan/route")
 );
 
+app.use(
+  "/api/wawancara",
+  checkAuthorization,
+  require("./features/wawancara/route")
+);
+
+app.use(
+  "/api/penelaahan",
+  checkAuthorization,
+  require("./features/penelaahan/route")
+);
+
+app.use(
+  "/api/verifikasi-nasional-v2",
+  checkAuthorization,
+  require("./features/verifikasi_nasional_v2/route")
+);
+
 app.use(multerErrorHandler);
 
 module.exports = app;
