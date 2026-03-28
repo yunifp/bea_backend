@@ -4,9 +4,10 @@ const cors = require("cors");
 const morgan = require("morgan");
 const bodyParser = require("body-parser");
 const multerErrorHandler = require("./common/middleware/multerErrorHandler");
-
+const path = require("path");
 const checkAuthorization = require("./common/middleware/auth_middleware");
-
+const cekDataController = require("./features/cek_data/controller");
+  
 const app = express();
 app.set("trust proxy", true);
 app.use(
@@ -50,10 +51,32 @@ app.use(
 );
 
 app.use(
+  "/api/rekomtek",
+  checkAuthorization,
+  require("./features/rekomtek/route")
+);
+
+app.use(
+  "/api/penetapan",
+  checkAuthorization,
+  require("./features/penetapan/route")
+);
+app.get("/api/cek-data/public", cekDataController.cekStatusPublic);
+
+
+app.use(
+  "/api/cek-data",
+  checkAuthorization,
+  require("./features/cek_data/route")
+);
+
+app.use(
   "/api/verifikasi-nasional-v2",
   checkAuthorization,
   require("./features/verifikasi_nasional_v2/route")
 );
+
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 app.use(multerErrorHandler);
 

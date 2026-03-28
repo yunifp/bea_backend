@@ -209,7 +209,7 @@ exports.exportDetailSemua = async (req, res) => {
     // Ambil semua data detail untuk id_flow = 7
     const rows = await TrxBeasiswa.findAll({
       where: { id_flow: 9 },
-      attributes: ["nama_lengkap", "nik", "kode_pendaftaran", "jalur", "nama_dinas_provinsi", "nama_kluster", "tag_sktm", "tag_daerah_3T"],
+      attributes: ["nama_lengkap", "nik", "kode_pendaftaran", "jalur", "nama_dinas_provinsi", "nama_kluster"],
       order: [["nama_dinas_provinsi", "ASC"], ["nama_lengkap", "ASC"]],
       raw: true
     });

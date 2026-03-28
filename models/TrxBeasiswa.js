@@ -238,6 +238,7 @@ const TrxBeasiswa = sequelize.define(
     id_jalur: DataTypes.INTEGER(10),
     jalur: DataTypes.STRING(255),
     id_verifikator: DataTypes.INTEGER(11),
+    verifikator_nama: DataTypes.STRING(50),
 
     status_lulus_administrasi: DataTypes.ENUM("Y", "N"),
     status_lulus_wawancara_akademik: DataTypes.ENUM("Y", "N"),
@@ -265,7 +266,7 @@ const TrxBeasiswa = sequelize.define(
     tag_dinas_kabkot: DataTypes.ENUM("Y", "N"),
     tag_dinas_provinsi: DataTypes.ENUM("Y", "N"),
 
-    tag_sktm: DataTypes.ENUM("Y", "N"), 
+    tag_sktm: DataTypes.ENUM("Y", "N"),
 
     // Tambahkan 3 kolom ini dengan tipe ENUM
     tag_daerah_3T: {
