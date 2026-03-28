@@ -42,6 +42,15 @@ const TrxCatatanDataSection = sequelize.define(
       allowNull: true,
     },
 
+    data_tempat_tinggal_bekerja_is_valid: {
+      type: DataTypes.ENUM("Y", "N"),
+      allowNull: true,
+    },
+    data_tempat_tinggal_bekerja_catatan: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+
     data_orang_tua_is_valid: {
       type: DataTypes.ENUM("Y", "N"),
       allowNull: true,

@@ -53,7 +53,10 @@ const {
   getCountByProvinsiProsesLembagaSeleksi,
   getPendaftarPenetapanByProvinsi,
   getPendaftarPenetapan,
-  getDetailPenetapan
+  getDetailPenetapan,
+  downloadPendaftarAssignment,
+  downloadVerifikasiKabkota,
+  downloadVerifikasiProvinsi,
 } = require("../controller");
 const {
   uploadConfigs,
@@ -81,7 +84,6 @@ router.get(
 router.get("/full/:idTrxBeasiswa", getFullDataBeasiswa);
 router.post("/initial", createInitialTransaksi);
 // router.post("/", uploadConfigs.foto.single("foto"), submitBeasiswa);
-// Cek di route file, pastikan sudah:
 router.post(
   "/",
   uploadConfigs.foto_semua.fields([
@@ -163,7 +165,9 @@ router.get(
 );
 router.get("/pendaftar-penetapan/:beasiswaId", getPendaftarPenetapan);
 router.get("/detail-penetapan/:idTrxBeasiswa", getDetailPenetapan);
-
+router.get("/assignment/download", downloadPendaftarAssignment);
+router.get("/download-verifikasi-kabkota", downloadVerifikasiKabkota);
+router.get("/download-verifikasi-provinsi", downloadVerifikasiProvinsi);
 
 // router.get(
 //   "/:beasiswaId/ba-kabkota", getBaKabkotaByProvinsi,
@@ -173,6 +177,4 @@ router.post(
   "/assignment/assign-by-jumlah", assignVerifikatorByJumlah,
 );
 
-// router.put("/:idTrxBeasiswa/kluster", updateKlusterBeasiswa);
-// router.put("/kluster/bulk", updateKlusterBeasiswaBulk);
 module.exports = router;

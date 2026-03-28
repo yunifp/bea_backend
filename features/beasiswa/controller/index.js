@@ -20,6 +20,7 @@ const {
 } = require("../../../models");
 const { getFileUrl } = require("../../../common/middleware/upload_middleware");
 const ExcelJS = require("exceljs");
+const nodemailer = require("nodemailer");
 
 const buildWilayahFilter = ({ kode_prov, kode_kab }) => {
   const filter = {};
@@ -373,6 +374,7 @@ exports.getTransaksiBeasiswaByPaginationSeleksiAdministrasiDaerah = async (
         [Op.or]: [
           { nama_beasiswa: { [Op.like]: `%${search}%` } },
           { nama_lengkap: { [Op.like]: `%${search}%` } },
+          { kode_pendaftaran: { [Op.like]: `%${search}%` } },
         ],
       }
       : baseCondition;
@@ -1079,7 +1081,6 @@ exports.submitBeasiswa = async (req, res) => {
     } = req.body;
 
     // ✅ Ambil file dari req.files (upload.fields)
-    // req.files = { foto: [File], foto_depan: [File], ... }
     const files = req.files || {};
     const fotoFile = files["foto"]?.[0];
     const fotoDepanFile = files["foto_depan"]?.[0];
@@ -1245,7 +1246,6 @@ exports.submitBeasiswa = async (req, res) => {
       kode_dinas_provinsi: normalize(idDinasprov),
       kode_dinas_kabkota: normalize(idDinaskabkota),
 
-
       id_jalur: normalize(idJalur),
       jalur: normalize(namaJalur),
       updated_at: new Date(),
@@ -1280,11 +1280,6 @@ exports.submitBeasiswa = async (req, res) => {
       if (currentFlow === 1) {
         updateData.id_flow = 2;
         updateData.flow = "Verifikasi";
-
-        // if (!trxBeasiswa.kode_pendaftaran) {
-        //   const kodePendaftaran = await generateKodePendaftaran(idJalur);
-        //   updateData.kode_pendaftaran = kodePendaftaran;
-        // }
       } else if (currentFlow === 4) {
         updateData.id_flow = 5;
         updateData.flow = "Verifikasi Hasil Perbaikan";
@@ -1343,6 +1338,57 @@ exports.submitBeasiswa = async (req, res) => {
 
     if (insertDataPilihanProgramSudi.length > 0) {
       await TrxPilihanProgramStudi.bulkCreate(insertDataPilihanProgramSudi);
+    }
+
+    // 🚀 --- BLOK KIRIM EMAIL NOTIFIKASI JIKA BUKAN DRAFT --- 🚀
+    if (!is_draftx && normalize(email)) {
+      try {
+        const transporter = nodemailer.createTransport({
+          host: process.env.SMTP_HOST,
+          port: process.env.SMTP_PORT,
+          secure: process.env.SMTP_SECURE === "true",
+          auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS,
+          },
+        });
+
+        const finalKodePendaftaran = updateData.kode_pendaftaran || trxBeasiswa.kode_pendaftaran || "Sedang Diproses";
+
+        const mailOptions = {
+          from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_USER}>`,
+          to: normalize(email),
+          subject: "Pendaftaran Beasiswa Berhasil - Aplikasi Palma",
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+              <h2 style="color: #2e7d32; text-align: center;">Pendaftaran Berhasil Disubmit</h2>
+              <p>Halo <b>${normalize(nama_lengkap)}</b>,</p>
+              <p>Selamat! Data pendaftaran beasiswa Anda telah berhasil kami terima dan saat ini telah masuk ke tahap verifikasi.</p>
+              
+              <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                <p style="margin: 5px 0;"><b>Kode Pendaftaran:</b> ${finalKodePendaftaran}</p>
+                <p style="margin: 5px 0;"><b>Jalur Pendaftaran:</b> ${normalize(namaJalur) || '-'}</p>
+              </div>
+
+              <p>Silakan pantau status kelulusan dan tahapan proses verifikasi Anda secara berkala melalui dashboard akun Palma Beasiswa Anda.</p>
+              
+              <div style="text-align: center; margin: 30px 0;">
+                <a href="${process.env.BASE_URL || 'https://beasiswa.dev-palma.my.id'}" style="background-color: #2e7d32; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">Masuk ke Dashboard</a>
+              </div>
+              
+              <hr style="border: 0; border-top: 1px solid #eee; margin-top: 30px;" />
+              <p style="font-size: 12px; color: #888; text-align: center;">&copy; ${new Date().getFullYear()} Aplikasi Palma Beasiswa. All rights reserved.</p>
+            </div>
+          `,
+        };
+
+        transporter.sendMail(mailOptions).catch(err => {
+          console.error("Gagal mengirim email notifikasi pendaftaran:", err);
+        });
+
+      } catch (err) {
+        console.error("Error setting up email:", err);
+      }
     }
 
     return successResponse(res, "Transaksi berhasil diperbarui");
@@ -1416,8 +1462,19 @@ exports.updateFlowBeasiswa = async (req, res) => {
       return [parts[0], parts[1]];
     };
 
-    const [idDinasprov, namaDinasprov] = safeSplit(verifikasi_data.kode_dinas_provinsi);
-    const [idDinaskabkota, namaDinaskabkota] = safeSplit(verifikasi_data.kode_dinas_kabkota);
+    // Ambil data pendaftar untuk kebutuhan pengiriman email
+    const pendaftar = await TrxBeasiswa.findOne({
+      where: { id_trx_beasiswa: idTrxBeasiswa },
+      attributes: ["email", "nama_lengkap", "kode_pendaftaran"]
+    });
+
+    let idDinasprov = null, namaDinasprov = null;
+    let idDinaskabkota = null, namaDinaskabkota = null;
+
+    if (verifikasi_data) {
+      [idDinasprov, namaDinasprov] = safeSplit(verifikasi_data.kode_dinas_provinsi);
+      [idDinaskabkota, namaDinaskabkota] = safeSplit(verifikasi_data.kode_dinas_kabkota);
+    }
 
     const updateData = {};
 
@@ -1430,6 +1487,54 @@ exports.updateFlowBeasiswa = async (req, res) => {
     if (id_flow == 3) {
       updateData.id_flow = 3;
       updateData.flow = "Tolak";
+
+      // 🚀 --- BLOK KIRIM EMAIL NOTIFIKASI PENOLAKAN --- 🚀
+      if (pendaftar && pendaftar.email) {
+        try {
+          const transporter = require("nodemailer").createTransport({
+            host: process.env.SMTP_HOST,
+            port: process.env.SMTP_PORT,
+            secure: process.env.SMTP_SECURE === "true",
+            auth: {
+              user: process.env.SMTP_USER,
+              pass: process.env.SMTP_PASS,
+            },
+          });
+
+          const mailOptions = {
+            from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_USER}>`,
+            to: pendaftar.email,
+            subject: "Pemberitahuan Hasil Verifikasi Administrasi - Aplikasi Palma",
+            html: `
+              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+                <h2 style="color: #d32f2f; text-align: center;">Pemberitahuan Verifikasi Administrasi</h2>
+                <p>Halo <b>${pendaftar.nama_lengkap}</b>,</p>
+                <p>Terima kasih atas partisipasi Anda dalam pendaftaran Beasiswa. Setelah melakukan verifikasi dan penelaahan terhadap berkas pendaftaran Anda (Kode Pendaftaran: <b>${pendaftar.kode_pendaftaran || '-'}</b>), dengan berat hati kami sampaikan bahwa pendaftaran Anda <b>TIDAK LULUS</b> (Ditolak).</p>
+                
+                <div style="background-color: #fff3f3; border-left: 4px solid #d32f2f; padding: 15px; margin: 20px 0;">
+                  <p style="margin: 0; color: #d32f2f; font-size: 14px;"><b>Alasan Penolakan / Catatan Verifikator:</b></p>
+                  <p style="margin: 5px 0 0 0; color: #333;"><i>"${catatan || 'Tidak ada catatan tambahan.'}"</i></p>
+                </div>
+
+                <p>Jangan patah semangat dan teruslah berusaha. Terima kasih atas ketertarikan Anda pada program beasiswa kami.</p>
+                
+                <hr style="border: 0; border-top: 1px solid #eee; margin-top: 30px;" />
+                <p style="font-size: 12px; color: #888; text-align: center;">&copy; ${new Date().getFullYear()} Aplikasi Palma Beasiswa. All rights reserved.</p>
+              </div>
+            `,
+          };
+
+          // Kirim secara asinkron agar tidak membuat aplikasi loading lama
+          transporter.sendMail(mailOptions).catch(err => {
+            console.error("Gagal mengirim email penolakan:", err);
+          });
+
+        } catch (err) {
+          console.error("Error setting up email untuk penolakan:", err);
+        }
+      }
+      // ---------------------------------------------------------
+
     } else if (id_flow == 4) {
       updateData.id_flow = 4;
       updateData.flow = "Perlu Perbaikan";
@@ -1467,37 +1572,9 @@ exports.updateFlowBeasiswa = async (req, res) => {
       updateData.flow = "Analisa dan Penelaahan";
     }
 
-
     await TrxBeasiswa.update(updateData, {
       where: { id_trx_beasiswa: idTrxBeasiswa },
     });
-
-    // Data section
-    // if (verifikasi_data) {
-    //   const insertDataSection = {
-    //     id_trx_beasiswa: idTrxBeasiswa,
-    //     data_pribadi_is_valid: verifikasi_data.data_pribadi_is_valid,
-    //     data_pribadi_catatan: verifikasi_data.data_pribadi_catatan,
-    //     data_tempat_tinggal_is_valid:
-    //       verifikasi_data.data_tempat_tinggal_is_valid,
-    //     data_tempat_tinggal_catatan:
-    //       verifikasi_data.data_tempat_tinggal_catatan,
-    //     data_tempat_bekerja_is_valid:
-    //       verifikasi_data.data_tempat_bekerja_is_valid,
-    //     data_tempat_bekerja_catatan:
-    //       verifikasi_data.data_tempat_bekerja_catatan,
-    //     data_orang_tua_is_valid: verifikasi_data.data_orang_tua_is_valid,
-    //     data_orang_tua_catatan: verifikasi_data.data_orang_tua_catatan,
-    //     data_pendidikan_is_valid: verifikasi_data.data_pendidikan_is_valid,
-    //     data_pendidikan_catatan: verifikasi_data.data_pendidikan_catatan,
-    //     data_program_studi_is_valid: verifikasi_data.data_program_studi_is_valid,
-    //     data_program_studi_catatan: verifikasi_data.data_program_studi_catatan,
-    //     created_at: new Date(),
-    //     created_by: req.user.nama,
-    //   };
-
-    //   await TrxCatatanDataSection.create(insertDataSection);
-    // }
 
     // Data section
     if (verifikasi_data) {
@@ -1509,6 +1586,8 @@ exports.updateFlowBeasiswa = async (req, res) => {
         data_tempat_tinggal_catatan: verifikasi_data.data_tempat_tinggal_catatan,
         data_tempat_bekerja_is_valid: verifikasi_data.data_tempat_bekerja_is_valid,
         data_tempat_bekerja_catatan: verifikasi_data.data_tempat_bekerja_catatan,
+        data_tempat_tinggal_bekerja_is_valid: verifikasi_data.data_tempat_tinggal_bekerja_is_valid,
+        data_tempat_tinggal_bekerja_catatan: verifikasi_data.data_tempat_tinggal_bekerja_catatan,
         data_orang_tua_is_valid: verifikasi_data.data_orang_tua_is_valid,
         data_orang_tua_catatan: verifikasi_data.data_orang_tua_catatan,
         data_pendidikan_is_valid: verifikasi_data.data_pendidikan_is_valid,
@@ -1525,77 +1604,20 @@ exports.updateFlowBeasiswa = async (req, res) => {
       });
 
       if (existingRecord) {
-        // Update record yang sudah ada
         await TrxCatatanDataSection.update(insertDataSection, {
           where: { id_trx_beasiswa: idTrxBeasiswa },
         });
       } else {
-        // Buat baru jika belum ada
         await TrxCatatanDataSection.create(insertDataSection);
       }
     }
 
     // Data catatan persyaratan
-    // const { kategori, idTrxDokumen } = req.params;
-
     const semuaPersyaratan = [
-      ...(req.body.verifikasi_data.data_persyaratan_umum || []),
-      ...(req.body.verifikasi_data.data_persyaratan_khusus || []),
+      ...(req.body.verifikasi_data?.data_persyaratan_umum || []),
+      ...(req.body.verifikasi_data?.data_persyaratan_khusus || []),
     ];
 
-    // for (const item of semuaPersyaratan) {
-    //   const { id: idTrxDokumen, kategori, catatan } = item;
-
-    //   const updatePersyaratanData = {};
-
-    //   const kategoriUpper = kategori.toUpperCase(); // UMUM | KHUSUS
-
-    //   // ===============================
-    //   // CATATAN
-    //   // ===============================
-    //   if (catatan) {
-    //     if (verifikator === "ditjenbun") {
-    //       updatePersyaratanData.verifikator_catatan = catatan;
-    //     } else if (verifikator === "dinas") {
-    //       updatePersyaratanData.verifikator_dinas_catatan = catatan;
-    //     }
-    //   }
-
-    //   // ===============================
-    //   // NAMA VERIFIKATOR
-    //   // ===============================
-    //   if (req.user?.nama) {
-    //     if (verifikator === "ditjenbun") {
-    //       updatePersyaratanData.verifikator_nama = req.user.nama;
-    //     } else if (verifikator === "dinas") {
-    //       updatePersyaratanData.verifikator_dinas_nama = req.user.nama;
-    //     }
-    //   }
-
-    //   // ===============================
-    //   // TIMESTAMP
-    //   // ===============================
-    //   if (verifikator === "ditjenbun") {
-    //     updatePersyaratanData.verifikator_timestamp = new Date();
-    //   } else if (verifikator === "dinas") {
-    //     updatePersyaratanData.verifikator_dinas_timestamp = new Date();
-    //   }
-
-    //   // ===============================
-    //   // UPDATE SESUAI KATEGORI
-    //   // ===============================
-    //   if (kategoriUpper === "UMUM") {
-    //     await TrxDokumenUmum.update(updatePersyaratanData, {
-    //       where: { id: idTrxDokumen },
-    //     });
-    //   } else if (kategoriUpper === "KHUSUS") {
-    //     await TrxDokumenKhusus.update(updatePersyaratanData, {
-    //       where: { id: idTrxDokumen },
-    //     });
-    //   }
-    // }
-
-    // Ganti bagian loop semuaPersyaratan
     for (const item of semuaPersyaratan) {
       const { id: idTrxDokumen, kategori, catatan, is_valid } = item;
 
@@ -1603,7 +1625,6 @@ exports.updateFlowBeasiswa = async (req, res) => {
 
       const kategoriUpper = kategori.toUpperCase();
 
-      // ← TAMBAH: set status_verifikasi berdasarkan is_valid
       if (verifikator === "ditjenbun") {
         updatePersyaratanData.status_verifikasi =
           is_valid === "Y" ? "sesuai" : "tidak sesuai";
@@ -1611,7 +1632,7 @@ exports.updateFlowBeasiswa = async (req, res) => {
         if (req.user?.nama) updatePersyaratanData.verifikator_nama = req.user.nama;
         updatePersyaratanData.verifikator_timestamp = new Date();
       } else if (verifikator === "dinas") {
-        updatePersyaratanData.verifikator_dinas_is_valid = is_valid; // ← tambahkan ini
+        updatePersyaratanData.verifikator_dinas_is_valid = is_valid;
         if (catatan) updatePersyaratanData.verifikator_dinas_catatan = catatan;
         if (req.user?.nama) updatePersyaratanData.verifikator_dinas_nama = req.user.nama;
         updatePersyaratanData.verifikator_dinas_timestamp = new Date();
@@ -1630,6 +1651,7 @@ exports.updateFlowBeasiswa = async (req, res) => {
 
     return successResponse(res, "Berhasil melakukan verifikasi");
   } catch (error) {
+    console.error(error);
     return errorResponse("Internal Server Error");
   }
 };
@@ -2954,6 +2976,7 @@ exports.getPendaftarByProvinsi = async (req, res) => {
         "status_lulus_administrasi",
         "status_dari_verifikator_dinas",
         "verifikator_catatan",
+        "tag_sktm",
       ],
       limit,
       offset,
@@ -3080,22 +3103,25 @@ exports.getPendaftarForAssignment = async (req, res) => {
     const offset = (page - 1) * limit;
     const search = req.query.search || "";
     const filter = req.query.filter || "all"; // "all" | "assigned" | "unassigned"
+    const id_verifikator = req.query.id_verifikator || null;
 
     // ── Base condition ───────────────────────────────────────────────────────
     const baseCondition = {
       id_ref_beasiswa: 1,
       // id_flow: { [Op.ne]: 1 }, // exclude draft
-      id_flow: 1, // exclude draft
+      // id_flow: 1, // exclude draft
       // jalur: { [Op.ne]: null }
     };
-
     // ── Filter assign status ─────────────────────────────────────────────────
-    if (filter === "assigned") {
-      baseCondition.id_verifikator = { [Op.ne]: null };
-      baseCondition.jalur = { [Op.ne]: null };
-    } else if (filter === "unassigned") {
+    if (filter === "assigned" || filter === "filter-assigned") {
+      // ✅ jika ada id_verifikator spesifik, filter per selektor
+      baseCondition.id_verifikator = id_verifikator
+        ? Number(id_verifikator)
+        : { [Op.ne]: null };
+      baseCondition.id_flow = { [Op.ne]: 0 };
+    } else if (filter === "unassigned" || filter === "filter-unassigned") {
       baseCondition.id_verifikator = null;
-
+      baseCondition.id_flow = { [Op.or]: [1] };
     }
 
     // ── Search ───────────────────────────────────────────────────────────────
@@ -3120,6 +3146,7 @@ exports.getPendaftarForAssignment = async (req, res) => {
         "kode_pendaftaran",
         "jalur",
         "id_verifikator",
+        "verifikator_nama",
         "id_flow",
         "flow",
         "status_lulus_administrasi",
@@ -3194,51 +3221,6 @@ exports.assignVerifikator = async (req, res) => {
   }
 };
 
-// exports.getBebanVerifikator = async (req, res) => {
-//   try {
-
-//     const bebanList = await TrxBeasiswa.findAll({
-//       attributes: [
-//         "id_verifikator",
-//         [fn("COUNT", col("id_trx_beasiswa")), "total_beban"],
-//       ],
-//       where: {
-//         id_verifikator: { [Op.ne]: null },
-//       },
-//       group: ["id_verifikator"],
-//       raw: true,
-//     });
-
-
-//     const verifikatorIds = bebanList.map((b) => b.id_verifikator);
-
-//     let namaMap = {};
-
-//     if (verifikatorIds.length > 0) {
-
-//       const users = await Users.findAll({
-//         where: { id: { [Op.in]: verifikatorIds } },
-//         attributes: ["id", "nama"], // sesuaikan nama field
-//         raw: true,
-//       });
-
-//       namaMap = Object.fromEntries(users.map((u) => [u.id, u.nama]));
-//     }
-
-
-//     const result = bebanList.map((b) => ({
-//       id_verifikator: b.id_verifikator,
-//       total_beban: b.total_beban,
-//       nama: namaMap[b.id_verifikator] ?? `Verifikator #${b.id_verifikator}`,
-//     }));
-
-//     return successResponse(res, "Data berhasil dimuat", result);
-//   } catch (error) {
-//     console.error(error);
-//     return errorResponse(res, "Internal Server Error");
-//   }
-// };
-
 exports.assignVerifikatorByJumlah = async (req, res) => {
   const t = await sequelize.transaction();
 
@@ -3267,7 +3249,7 @@ exports.assignVerifikatorByJumlah = async (req, res) => {
     const pool = await TrxBeasiswa.findAll({
       where: {
         id_ref_beasiswa: 1,
-        id_flow: { [Op.ne]: 0 }, // exclude draft
+        id_flow: { [Op.or]: [1] }, // exclude draft
         id_verifikator: { [Op.is]: null },
       },
       attributes: ["id_trx_beasiswa"],
@@ -3290,6 +3272,7 @@ exports.assignVerifikatorByJumlah = async (req, res) => {
     for (const item of assignments) {
       const jumlah = Number(item.jumlah);
       const idVerifikator = Number(item.id_verifikator);
+      const verifikator_nama = String(item.verifikator_nama);
       const slice = pool.slice(cursor, cursor + jumlah);
       cursor += jumlah;
 
@@ -3300,6 +3283,7 @@ exports.assignVerifikatorByJumlah = async (req, res) => {
       const [updatedCount] = await TrxBeasiswa.update(
         {
           id_verifikator: idVerifikator,
+          verifikator_nama: verifikator_nama,
           updated_at: new Date(),
         },
         {
@@ -3636,5 +3620,375 @@ exports.getDetailPenetapan = async (req, res) => {
   } catch (error) {
     console.error("Error getDetailPenetapan:", error);
     return errorResponse(res, "Internal Server Error");
+  }
+};
+exports.downloadPendaftarAssignment = async (req, res) => {
+  try {
+    const { filter = "all", search = "", id_verifikator } = req.query;
+
+    const baseCondition = {
+      id_ref_beasiswa: 1,
+    };
+
+    if (filter === "filter-assigned" || filter === "assigned") {
+      baseCondition.id_verifikator = id_verifikator
+        ? Number(id_verifikator)
+        : { [Op.ne]: null };
+      baseCondition.id_flow = { [Op.ne]: 0 };
+    } else if (filter === "filter-unassigned" || filter === "unassigned") {
+      baseCondition.id_verifikator = null;
+      baseCondition.id_flow = { [Op.or]: [1] };
+    }
+
+    const whereCondition = search
+      ? {
+        ...baseCondition,
+        [Op.or]: [
+          { nama_lengkap: { [Op.like]: `%${search}%` } },
+          { nik: { [Op.like]: `%${search}%` } },
+          { kode_pendaftaran: { [Op.like]: `%${search}%` } },
+        ],
+      }
+      : baseCondition;
+
+    const rows = await TrxBeasiswa.findAll({
+      where: whereCondition,
+      attributes: [
+        "id_trx_beasiswa",
+        "nama_lengkap",
+        "nik",
+        "kode_pendaftaran",
+        "jalur",
+        "id_verifikator",
+        "verifikator_nama",
+        "id_flow",
+        "flow",
+        "tinggal_prov",
+        "tinggal_kab_kota",
+        "created_at",
+      ],
+      order: [["id_trx_beasiswa", "ASC"]],
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Data Pendaftar");
+
+    // Header
+    worksheet.getRow(1).values = [
+      "No",
+      "Kode Pendaftaran",
+      "Nama Lengkap",
+      "NIK",
+      "Jalur",
+      "Provinsi",
+      "Kabupaten/Kota",
+      "Status Flow",
+      "Nama Selektor",
+      "Tanggal Daftar",
+    ];
+
+    worksheet.columns = [
+      { key: "no", width: 6 },
+      { key: "kode_pendaftaran", width: 20 },
+      { key: "nama_lengkap", width: 30 },
+      { key: "nik", width: 20 },
+      { key: "jalur", width: 20 },
+      { key: "prov", width: 25 },
+      { key: "kabkota", width: 25 },
+      { key: "flow", width: 25 },
+      { key: "selektor", width: 25 },
+      { key: "tanggal_daftar", width: 20 },
+    ];
+
+    rows.forEach((row, index) => {
+      worksheet.addRow({
+        no: index + 1,
+        kode_pendaftaran: row.kode_pendaftaran || "-",
+        nama_lengkap: row.nama_lengkap || "-",
+        nik: row.nik || "-",
+        jalur: row.jalur || "-",
+        prov: row.tinggal_prov || "-",
+        kabkota: row.tinggal_kab_kota || "-",
+        flow: row.flow || "-",
+        selektor: row.verifikator_nama || "Belum ada",
+        tanggal_daftar: row.created_at
+          ? new Date(row.created_at).toLocaleDateString("id-ID")
+          : "-",
+      });
+    });
+
+    // Styling header
+    worksheet.getRow(1).eachCell((cell) => {
+      cell.font = { bold: true };
+      cell.alignment = { horizontal: "center" };
+      cell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFE0F0FF" },
+      };
+    });
+
+    const label =
+      filter === "filter-unassigned" || filter === "unassigned"
+        ? "belum_assign"
+        : filter === "filter-assigned" || filter === "assigned"
+          ? "sudah_assign"
+          : "semua";
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=pendaftar_${label}.xlsx`,
+    );
+
+    await workbook.xlsx.write(res);
+    res.status(200).end();
+  } catch (error) {
+    console.error("Error downloadPendaftarAssignment:", error);
+    return errorResponse(res, "Internal Server Error");
+  }
+};
+
+// ─── Helper: build where condition untuk verifikasi daerah ────────────────────
+const buildVerifikasiDaerahWhere = ({ idBeasiswa, kodeProvinsi, kodeKabkota, dinas, search, idFlow, idJalur, statusLulus }) => {
+  const baseCondition = {
+    id_ref_beasiswa: idBeasiswa,
+  };
+
+  if (kodeKabkota) {
+    baseCondition.kode_dinas_kabkota = kodeKabkota;
+  } else if (kodeProvinsi) {
+    baseCondition.kode_dinas_provinsi = kodeProvinsi;
+  }
+
+  if (dinas === "kabkota") {
+    baseCondition.id_flow = 6;
+  } else if (dinas === "provinsi") {
+    baseCondition.id_flow = 7;
+  }
+
+  // Override id_flow jika filter spesifik dikirim
+  if (idFlow) {
+    baseCondition.id_flow = Number(idFlow);
+  }
+
+  if (idJalur) {
+    baseCondition.id_jalur = Number(idJalur);
+  }
+
+  // Filter lulus administrasi
+  if (statusLulus === "Y" || statusLulus === "N") {
+    const ADMIN_LULUS_FLOWS = [6, 7, 9, 10, 11, 12, 13];
+    if (statusLulus === "Y") {
+      baseCondition.id_flow = { [Op.in]: ADMIN_LULUS_FLOWS };
+    } else {
+      baseCondition.id_flow = { [Op.notIn]: ADMIN_LULUS_FLOWS };
+    }
+  }
+
+  if (!search) return baseCondition;
+
+  return {
+    ...baseCondition,
+    [Op.or]: [
+      { nama_lengkap: { [Op.like]: `%${search}%` } },
+      { nik: { [Op.like]: `%${search}%` } },
+      { kode_pendaftaran: { [Op.like]: `%${search}%` } },
+    ],
+  };
+};
+
+// ─── Helper: generate Excel verifikasi daerah ────────────────────────────────
+const generateExcelVerifikasiDaerah = async (res, rows, filename) => {
+  const ADMIN_LULUS_FLOWS = [6, 7, 9, 10, 11, 12, 13];
+
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("Data Verifikasi");
+
+  worksheet.getRow(1).values = [
+    "No",
+    "Kode Pendaftaran",
+    "Nama Lengkap",
+    "NIK",
+    "Jalur",
+    "Provinsi Tinggal",
+    "Kabupaten/Kota Tinggal",
+    "Dinas Kabupaten/Kota",
+    "Dinas Provinsi",
+    "Status Flow",
+    "Lulus Administrasi",
+    "Tanggal Daftar",
+  ];
+
+  worksheet.columns = [
+    { key: "no", width: 6 },
+    { key: "kode_pendaftaran", width: 22 },
+    { key: "nama_lengkap", width: 30 },
+    { key: "nik", width: 20 },
+    { key: "jalur", width: 20 },
+    { key: "tinggal_prov", width: 25 },
+    { key: "tinggal_kab_kota", width: 25 },
+    { key: "nama_dinas_kabkota", width: 30 },
+    { key: "nama_dinas_provinsi", width: 30 },
+    { key: "flow", width: 30 },
+    { key: "lulus_administrasi", width: 20 },
+    { key: "tanggal_daftar", width: 20 },
+  ];
+
+  rows.forEach((row, index) => {
+    const isLulus = ADMIN_LULUS_FLOWS.includes(row.id_flow);
+    worksheet.addRow({
+      no: index + 1,
+      kode_pendaftaran: row.kode_pendaftaran || "-",
+      nama_lengkap: row.nama_lengkap || "-",
+      nik: row.nik || "-",
+      jalur: row.jalur || "-",
+      tinggal_prov: row.tinggal_prov || "-",
+      tinggal_kab_kota: row.tinggal_kab_kota || "-",
+      nama_dinas_kabkota: row.nama_dinas_kabkota || "-",
+      nama_dinas_provinsi: row.nama_dinas_provinsi || "-",
+      flow: row.flow || "-",
+      lulus_administrasi: isLulus ? "Lulus" : "Tidak Lulus",
+      tanggal_daftar: row.created_at
+        ? new Date(row.created_at).toLocaleDateString("id-ID")
+        : "-",
+    });
+  });
+
+  // Styling header
+  worksheet.getRow(1).eachCell((cell) => {
+    cell.font = { bold: true };
+    cell.alignment = { horizontal: "center" };
+    cell.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FFE0F0FF" },
+    };
+  });
+
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  );
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename=${filename}.xlsx`,
+  );
+
+  await workbook.xlsx.write(res);
+  res.status(200).end();
+};
+
+// ─── Download verifikasi kabkota ──────────────────────────────────────────────
+exports.downloadVerifikasiKabkota = async (req, res) => {
+  try {
+    const {
+      idBeasiswa,
+      kodeProvinsi,
+      kodeKabkota,
+      search = "",
+      idFlow,
+      idJalur,
+      statusLulus,
+    } = req.query;
+
+    const whereCondition = buildVerifikasiDaerahWhere({
+      idBeasiswa,
+      kodeProvinsi,
+      kodeKabkota,
+      dinas: "kabkota",
+      search,
+      idFlow,
+      idJalur,
+      statusLulus,
+    });
+
+    const rows = await TrxBeasiswa.findAll({
+      where: whereCondition,
+      attributes: [
+        "id_trx_beasiswa",
+        "kode_pendaftaran",
+        "nama_lengkap",
+        "nik",
+        "jalur",
+        "id_flow",
+        "flow",
+        "tinggal_prov",
+        "tinggal_kab_kota",
+        "nama_dinas_kabkota",
+        "nama_dinas_provinsi",
+        "created_at",
+      ],
+      order: [["id_trx_beasiswa", "ASC"]],
+    });
+
+    await generateExcelVerifikasiDaerah(
+      res,
+      rows,
+      `verifikasi_kabkota_${kodeKabkota || "semua"}`,
+    );
+  } catch (error) {
+    console.error("Error downloadVerifikasiKabkota:", error);
+    return errorResponse(res, "Gagal mengunduh file Excel");
+  }
+};
+
+// ─── Download verifikasi provinsi ─────────────────────────────────────────────
+exports.downloadVerifikasiProvinsi = async (req, res) => {
+  try {
+    const {
+      idBeasiswa,
+      kodeProvinsi,
+      kodeKabkota, // opsional, jika provinsi ingin filter per kabkota
+      search = "",
+      idFlow,
+      idJalur,
+      statusLulus,
+    } = req.query;
+
+    const whereCondition = buildVerifikasiDaerahWhere({
+      idBeasiswa,
+      kodeProvinsi,
+      kodeKabkota,
+      dinas: "provinsi",
+      search,
+      idFlow,
+      idJalur,
+      statusLulus,
+    });
+
+    const rows = await TrxBeasiswa.findAll({
+      where: whereCondition,
+      attributes: [
+        "id_trx_beasiswa",
+        "kode_pendaftaran",
+        "nama_lengkap",
+        "nik",
+        "jalur",
+        "id_flow",
+        "flow",
+        "tinggal_prov",
+        "tinggal_kab_kota",
+        "nama_dinas_kabkota",
+        "nama_dinas_provinsi",
+        "created_at",
+      ],
+      order: [
+        ["kode_dinas_kabkota", "ASC"],
+        ["id_trx_beasiswa", "ASC"],
+      ],
+    });
+
+    await generateExcelVerifikasiDaerah(
+      res,
+      rows,
+      `verifikasi_provinsi_${kodeProvinsi || "semua"}`,
+    );
+  } catch (error) {
+    console.error("Error downloadVerifikasiProvinsi:", error);
+    return errorResponse(res, "Gagal mengunduh file Excel");
   }
 };
