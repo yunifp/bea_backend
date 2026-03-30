@@ -4,15 +4,16 @@ const cors = require("cors");
 const morgan = require("morgan");
 const bodyParser = require("body-parser");
 const multerErrorHandler = require("./common/middleware/multerErrorHandler");
-
+const path = require("path");
 const checkAuthorization = require("./common/middleware/auth_middleware");
-
+const cekDataController = require("./features/cek_data/controller");
+  
 const app = express();
 app.set("trust proxy", true);
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },
-  }),
+  })
 );
 app.use(cors());
 app.use(morgan("dev"));
@@ -20,117 +21,73 @@ app.use(bodyParser.json());
 app.use(
   bodyParser.urlencoded({
     extended: true,
-  }),
+  })
 );
 
 app.use("/uploads", express.static(process.env.FILE_URL || "E:/upload_palma"));
 
 app.use(
-  "/api/mahasiswa_pks/pks",
+  "/api/beasiswa/beasiswa",
   checkAuthorization,
-  require("./features/pks/route"),
+  require("./features/beasiswa/route")
 );
 
 app.use(
-  "/api/mahasiswa_pks/data-mahasiswa/ipk",
+  "/api/beasiswa/persyaratan",
   checkAuthorization,
-  require("./features/mahasiswa-ipk/route"),
+  require("./features/persyaratan/route")
 );
 
 app.use(
-  "/api/mahasiswa_pks/data-mahasiswa/biaya-hidup",
+  "/api/wawancara",
   checkAuthorization,
-  require("./features/mahasiswa-biaya-hidup/route"),
+  require("./features/wawancara/route")
 );
 
 app.use(
-  "/api/mahasiswa_pks/data-mahasiswa/biaya-pendidikan",
+  "/api/penelaahan",
   checkAuthorization,
-  require("./features/mahasiswa-biaya-pendidikan/route"),
+  require("./features/penelaahan/route")
 );
 
 app.use(
-  "/api/mahasiswa_pks/data-mahasiswa/biaya-buku",
+  "/api/rekomtek",
   checkAuthorization,
-  require("./features/mahasiswa-biaya-buku/route"),
+  require("./features/rekomtek/route")
 );
 
 app.use(
-  "/api/mahasiswa_pks/data-mahasiswa/biaya-transportasi",
+  "/api/penetapan",
   checkAuthorization,
-  require("./features/mahasiswa-biaya-transportasi/route"),
+  require("./features/penetapan/route")
+);
+app.get("/api/cek-data/public", cekDataController.cekStatusPublic);
+
+app.use(
+  "/api/dashboard",
+  checkAuthorization,
+  require("./features/dashboard/route")
 );
 
 app.use(
-  "/api/mahasiswa_pks/data-mahasiswa/biaya-sertifikasi",
-  checkAuthorization,
-  require("./features/mahasiswa-biaya-sertifikasi/route"),
+  "/api/laporan/pendaftar",
+  checkAuthorization, 
+  require("./features/laporan-pendaftar/route")
 );
 
 app.use(
-  "/api/mahasiswa_pks/data-mahasiswa/tracer-studi",
+  "/api/cek-data",
   checkAuthorization,
-  require("./features/mahasiswa-tracer-studi/route"),
+  require("./features/cek_data/route")
 );
 
 app.use(
-  "/api/mahasiswa_pks/pengajuan-pks/biaya-hidup",
+  "/api/verifikasi-nasional-v2",
   checkAuthorization,
-  require("./features/pks-biaya-hidup/route"),
+  require("./features/verifikasi_nasional_v2/route")
 );
 
-app.use(
-  "/api/mahasiswa_pks/pengajuan-pks/biaya-buku",
-  checkAuthorization,
-  require("./features/pks-biaya-buku/route"),
-);
-
-app.use(
-  "/api/mahasiswa_pks/pengajuan-pks/biaya-pendidikan",
-  checkAuthorization,
-  require("./features/pks-biaya-pendidikan/route"),
-);
-
-app.use(
-  "/api/mahasiswa_pks/pengajuan-pks/biaya-transportasi",
-  checkAuthorization,
-  require("./features/pks-biaya-transportasi/route"),
-);
-
-app.use(
-  "/api/mahasiswa_pks/pengajuan-pks/biaya-sertifikasi",
-  checkAuthorization,
-  require("./features/pks-biaya-sertifikasi/route"),
-);
-
-app.use(
-  "/api/mahasiswa_pks/statistik-mahasiswa",
-  require("./features/statistik-mahasiswa/route"),
-);
-
-app.use(
-  "/api/mahasiswa_pks/statistik",
-  checkAuthorization,
-  require("./features/statistik/route"),
-);
-
-app.use(
-  "/api/mahasiswa_pks/log-perubahan",
-  checkAuthorization,
-  require("./features/log-perubahan/route"),
-);
-
-app.use(
-  "/api/mahasiswa_pks/validitas-keaktifan-mahasiswa",
-  checkAuthorization,
-  require("./features/validitas-keaktifan-mahasiswa/route"),
-);
-
-app.use(
-  "/api/mahasiswa_pks/validitas-ipk-mahasiswa",
-  checkAuthorization,
-  require("./features/validitas-ipk-mahasiswa/route"),
-);
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 app.use(multerErrorHandler);
 
