@@ -7,6 +7,8 @@ const {
   updateCatatanPersyaratan,
   uploadFileSK,
   uploadFileSKProvinsi,
+  uploadFileBA,
+  uploadFileBAProvinsi
 } = require("../controller");
 const {
   uploadConfigs,
@@ -34,6 +36,18 @@ router.post(
   "/upload-file-sk-provinsi/:idBeasiswa",
   uploadConfigs.persyaratan.single("file"),
   uploadFileSKProvinsi
+);
+
+router.post(
+  "/upload-file-ba/:idBeasiswa",
+  uploadConfigs.berita_acara.single("file"),
+  uploadFileBA
+);
+
+router.post(
+  "/upload-file-ba-provinsi/:idBeasiswa",
+  uploadConfigs.berita_acara.single("file"),
+  uploadFileBAProvinsi
 );
 
 module.exports = router;

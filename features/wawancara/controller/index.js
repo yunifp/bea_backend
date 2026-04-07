@@ -24,7 +24,7 @@ exports.getPendaftarWawancara = async (req, res) => {
       where: whereCondition,
       attributes: [
         "id_trx_beasiswa", "nama_lengkap", "nik", "kode_pendaftaran", 
-        "jalur", "nama_kluster", "nilai_temp"
+        "jalur", "nama_kluster", "nilai_temp", "status_wawancara" 
       ],
       limit,
       offset,
@@ -43,13 +43,12 @@ exports.getPendaftarWawancara = async (req, res) => {
   }
 };
 
-
 exports.downloadExcelWawancara = async (req, res) => {
   try {
     const rows = await TrxBeasiswa.findAll({
       where: { id_flow: 10 },
       attributes: [
-        "id_trx_beasiswa", "nama_lengkap", "nik", "kode_pendaftaran", "jalur", "nama_kluster", "nilai_temp"
+        "id_trx_beasiswa", "nama_lengkap", "nik", "kode_pendaftaran", "jalur", "nama_kluster", "nilai_temp", "status_wawancara"
       ],
       order: [["nama_lengkap", "ASC"]],
       raw: true
@@ -58,20 +57,15 @@ exports.downloadExcelWawancara = async (req, res) => {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Data Wawancara");
 
+    // Catatan Disederhanakan
     worksheet.mergeCells("A1:H1");
     const noteCell1 = worksheet.getCell("A1");
-    noteCell1.value = 'Isi/update angka pada kolom "Nilai" di sebelah kanan.';
-    noteCell1.font = { color: { argb: "FF000000" } };
+    noteCell1.value = 'Hanya tampilkan rekapitulasi wawancara. Kolom Nilai otomatis dari sistem.';
+    noteCell1.font = { color: { argb: "FF000000" }, italic: true };
     noteCell1.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFFE0" } };
 
-    worksheet.mergeCells("A2:H2");
-    const noteCell2 = worksheet.getCell("A2");
-    noteCell2.value = "Jangan ubah urutan baris atau data bawaan sistem!";
-    noteCell2.font = { color: { argb: "FFFF0000" } };
-    noteCell2.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFFE0" } };
-
-    worksheet.getRow(4).values = [
-      "No", "Nama Lengkap", "NIK", "Kode Pendaftaran", "Jalur", "Status Kluster", "Nilai", "ID_SISTEM"
+    worksheet.getRow(3).values = [
+      "No", "Nama Lengkap", "NIK", "Kode Pendaftaran", "Jalur", "Status Kluster", "Status Wawancara", "Nilai"
     ];
 
     worksheet.columns = [
@@ -81,8 +75,8 @@ exports.downloadExcelWawancara = async (req, res) => {
       { key: "kode", width: 25 },
       { key: "jalur", width: 20 },
       { key: "kluster", width: 20 },
-      { key: "nilai", width: 15 },
-      { key: "id_trx", width: 15, hidden: true },
+      { key: "status_wawancara", width: 20 },
+      { key: "nilai", width: 20 },
     ];
 
     rows.forEach((row, index) => {
@@ -93,18 +87,18 @@ exports.downloadExcelWawancara = async (req, res) => {
         kode: row.kode_pendaftaran || "-",
         jalur: row.jalur || "-",
         kluster: row.nama_kluster || "-",
-        nilai: row.nilai_temp || "", 
-        id_trx: row.id_trx_beasiswa 
+        status_wawancara: row.status_wawancara || "-", 
+        nilai: row.nilai_temp || "Belum dinilai", 
       });
     });
 
-    worksheet.getRow(4).eachCell((cell) => {
+    worksheet.getRow(3).eachCell((cell) => {
       cell.font = { bold: true };
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE0F0FF" } };
     });
 
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader("Content-Disposition", "attachment; filename=template_wawancara.xlsx");
+    res.setHeader("Content-Disposition", "attachment; filename=rekap_wawancara.xlsx");
 
     await workbook.xlsx.write(res);
     res.status(200).end();
@@ -114,58 +108,32 @@ exports.downloadExcelWawancara = async (req, res) => {
   }
 };
 
-
-exports.uploadExcelWawancara = async (req, res) => {
+exports.updateNilaiWawancaraSingle = async (req, res) => {
   try {
-    if (!req.file) return errorResponse(res, "File Excel tidak ditemukan");
+    const { idTrxBeasiswa } = req.params;
+    const { status_wawancara } = req.body; 
 
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(req.file.buffer);
-    const worksheet = workbook.getWorksheet("Data Wawancara");
-
-    if (!worksheet) return errorResponse(res, "Sheet 'Data Wawancara' tidak ditemukan");
-
-    let successCount = 0;
-    let failedCount = 0;
-
-    for (let i = 5; i <= worksheet.rowCount; i++) {
-      const row = worksheet.getRow(i);
-      
-      let rawNilai = row.getCell(7).value; 
-      let rawIdTrx = row.getCell(8).value; 
-
-      if (rawNilai !== null && typeof rawNilai === 'object' && rawNilai.result !== undefined) rawNilai = rawNilai.result;
-      if (rawIdTrx !== null && typeof rawIdTrx === 'object' && rawIdTrx.result !== undefined) rawIdTrx = rawIdTrx.result;
-
-      const nilaiVal = rawNilai !== null && rawNilai !== undefined ? rawNilai.toString().trim() : null;
-      const idTrx = rawIdTrx !== null && rawIdTrx !== undefined ? rawIdTrx.toString().trim() : null;
-
-      if (!idTrx) continue;
-
-      try {
-        const newNilai = nilaiVal === "" ? null : nilaiVal;
-        
-        await sequelize.query(
-          `UPDATE trx_beasiswa SET nilai_temp = :nilai WHERE id_trx_beasiswa = :id AND id_flow = 10`,
-          {
-            replacements: { nilai: newNilai, id: idTrx },
-            type: sequelize.QueryTypes.UPDATE
-          }
-        );
-        
-        console.log(`[RAW UPDATE SUCCESS] ID_TRX: ${idTrx} | Nilai Baru: ${newNilai}`);
-        successCount++;
-
-      } catch (error) {
-        console.error(`Gagal update baris ID ${idTrx}:`, error);
-        failedCount++;
-      }
+    // Validasi nilai status_wawancara
+    if (status_wawancara && !["Rekomendasi", "Tidak Rekomendasi"].includes(status_wawancara)) {
+        return errorResponse(res, "Nilai hasil seleksi tidak valid.", 400);
     }
 
-    return successResponse(res, `Upload selesai. ${successCount} data berhasil diperbarui.`);
+    const updateData = {};
+    if (status_wawancara !== undefined) updateData.status_wawancara = status_wawancara;
+
+    if (Object.keys(updateData).length > 0) {
+        await TrxBeasiswa.update(updateData, { 
+        where: { 
+            id_trx_beasiswa: idTrxBeasiswa, 
+            id_flow: 10 
+        } 
+        });
+    }
+
+    return successResponse(res, "Data wawancara berhasil diperbarui.");
   } catch (error) {
-    console.error("Error uploadExcelWawancara:", error);
-    return errorResponse(res, "Gagal memproses file Excel");
+    console.error("Error updateNilaiWawancaraSingle:", error);
+    return errorResponse(res, "Internal Server Error");
   }
 };
 

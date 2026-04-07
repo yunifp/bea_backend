@@ -5,21 +5,23 @@ const { successResponse, errorResponse } = require("../../../common/response");
 exports.getDashboardStats = async (req, res) => {
   try {
     const { id_beasiswa } = req.query;
-    const baseWhere = {
-      id_flow: { [Op.in]: [0, 1] }
-    };
-    if (id_beasiswa) {
-      baseWhere.id_ref_beasiswa = id_beasiswa;
-    }
+    
+    const filterBeasiswa = id_beasiswa ? { id_ref_beasiswa: id_beasiswa } : {};
 
     const jumlahPeminat = await TrxBeasiswa.count({
-      where: baseWhere,
+      where: {
+        ...filterBeasiswa,
+        is_active: { [Op.in]: [0, 1] } 
+      },
       distinct: true,
       col: "id_users"
     });
 
     const jumlahPendaftar = await TrxBeasiswa.count({
-      where: { ...baseWhere, is_active: 1 },
+      where: { 
+        ...filterBeasiswa, 
+        is_active: 1 
+      },
       distinct: true,
       col: "id_users"
     });
@@ -31,7 +33,8 @@ exports.getDashboardStats = async (req, res) => {
         [fn("COUNT", fn("DISTINCT", col("id_users"))), "jumlah_pendaftar"]
       ],
       where: {
-        ...baseWhere,
+        ...filterBeasiswa,
+        is_active: 1, 
         tinggal_kode_prov: { [Op.ne]: null }
       },
       group: ["tinggal_kode_prov", "tinggal_prov"],

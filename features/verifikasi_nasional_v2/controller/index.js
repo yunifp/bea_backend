@@ -1,6 +1,7 @@
 const { Op, fn, col } = require("sequelize");
 const { TrxBeasiswa } = require("../../../models");
 const { successResponse, errorResponse } = require("../../../common/response");
+const ExcelJS = require("exceljs");
 
 // exports.getRekapProvinsi = async (req, res) => {
 //   try {
@@ -112,7 +113,8 @@ exports.getDetailProvinsi = async (req, res) => {
       whereCondition[Op.or] = [
         { nama_lengkap: { [Op.like]: `%${search}%` } },
         { nik: { [Op.like]: `%${search}%` } },
-        { kode_pendaftaran: { [Op.like]: `%${search}%` } }
+        { kode_pendaftaran: { [Op.like]: `%${search}%` } },
+        { nama_dinas_kabkota: { [Op.like]: `%${search}%` } }
       ];
     }
 
@@ -128,11 +130,16 @@ exports.getDetailProvinsi = async (req, res) => {
         "tag_sktm",
         "id_kluster",
         "nama_kluster",
-        "nama_dinas_provinsi"
+        "nama_dinas_provinsi",
+        "nama_dinas_kabkota",
+        "id_flow" // <--- DITAMBAHKAN AGAR FRONTEND BISA MEMBACA POSISI FLOW
       ],
       limit: parseInt(limit),
       offset: offset,
-      order: [["nama_lengkap", "ASC"]],
+      order: [
+        ["nama_dinas_kabkota", "ASC"], 
+        ["nama_lengkap", "ASC"]
+      ],
       raw: true
     });
 
@@ -156,7 +163,6 @@ exports.getDetailProvinsi = async (req, res) => {
     return errorResponse(res, "Internal Server Error");
   }
 };
-
 exports.ubahStatusKluster = async (req, res) => {
   try {
     const { id_trx_beasiswa } = req.params;
@@ -206,14 +212,80 @@ exports.kirimLembagaSeleksi = async (req, res) => {
 // Aksi 5: Export Data Detail
 exports.exportDetailSemua = async (req, res) => {
   try {
-    // Ambil semua data detail untuk id_flow = 7
+    // Ambil semua data detail untuk id_flow = 9
     const rows = await TrxBeasiswa.findAll({
       where: { id_flow: 9 },
-      attributes: ["nama_lengkap", "nik", "kode_pendaftaran", "jalur", "nama_dinas_provinsi", "nama_kluster"],
-      order: [["nama_dinas_provinsi", "ASC"], ["nama_lengkap", "ASC"]],
+      attributes: [
+        "nama_lengkap", 
+        "nik", 
+        "kode_pendaftaran", 
+        "jalur", 
+        "nama_dinas_provinsi", 
+        "nama_dinas_kabkota", // <--- DITAMBAHKAN
+        "nama_kluster"
+      ],
+      order: [
+        ["nama_dinas_provinsi", "ASC"], 
+        ["nama_dinas_kabkota", "ASC"], 
+        ["nama_lengkap", "ASC"]
+      ],
       raw: true
     });
-    return successResponse(res, "Berhasil mengambil data export", rows);
+
+    // Buat workbook Excel
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Detail Verifikasi Nasional");
+
+    // Tentukan header kolom
+    worksheet.columns = [
+      { header: "No", key: "no", width: 8 },
+      { header: "Nama Lengkap", key: "nama_lengkap", width: 35 },
+      { header: "NIK", key: "nik", width: 25 },
+      { header: "Kode Pendaftaran", key: "kode_pendaftaran", width: 25 },
+      { header: "Jalur", key: "jalur", width: 20 },
+      { header: "Provinsi", key: "nama_dinas_provinsi", width: 35 },
+      { header: "Kabupaten/Kota", key: "nama_dinas_kabkota", width: 35 }, // <--- DITAMBAHKAN
+      { header: "Nama Kluster", key: "nama_kluster", width: 20 }
+    ];
+
+    // Styling Header
+    worksheet.getRow(1).eachCell((cell) => {
+      cell.font = { bold: true };
+      cell.alignment = { horizontal: "center" };
+      cell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFE0F0FF" }
+      };
+    });
+
+    // Tambahkan baris data
+    rows.forEach((row, index) => {
+      worksheet.addRow({
+        no: index + 1,
+        nama_lengkap: row.nama_lengkap || "-",
+        nik: row.nik || "-",
+        kode_pendaftaran: row.kode_pendaftaran || "-",
+        jalur: row.jalur || "-",
+        nama_dinas_provinsi: row.nama_dinas_provinsi || "-",
+        nama_dinas_kabkota: row.nama_dinas_kabkota || "-", // <--- DITAMBAHKAN
+        nama_kluster: row.nama_kluster || "-"
+      });
+    });
+
+    // Set header response agar terdeteksi sebagai file Excel
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=Data_Detail_Verifikasi_Nasional.xlsx"
+    );
+
+    await workbook.xlsx.write(res);
+    return res.status(200).end();
+
   } catch (error) {
     console.error("Error exportDetailSemua:", error);
     return errorResponse(res, "Internal Server Error");

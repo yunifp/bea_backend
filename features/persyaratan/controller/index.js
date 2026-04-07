@@ -1,4 +1,13 @@
-const { TrxDokumenUmum, TrxDokumenKhusus, TrxDokumenDinasDaerah, TrxSkDinasKabkota, TrxSkDinasProvinsi, TrxBeasiswa } = require("../../../models");
+const {
+  TrxDokumenUmum,
+  TrxDokumenKhusus,
+  TrxDokumenDinasDaerah,
+  TrxSkDinasKabkota,
+  TrxSkDinasProvinsi,
+  TrxBeasiswa,
+  TrxBaDinasKabkota,
+  TrxBaDinasProvinsi
+} = require("../../../models");
 const { getFileUrl } = require("../../../common/middleware/upload_middleware");
 const { successResponse, failResponse, errorResponse } = require("../../../common/response");
 
@@ -182,7 +191,7 @@ exports.uploadFileSK = async (req, res) => {
     const { idBeasiswa } = req.params;
     const { kode_kab, kode_prov, nama_dinas_kabkota, nama_dinas_provinsi } = req.user;
     const { filename } = req.file;
-    const fileUrl = getFileUrl(req, "persyaratan", filename);
+    const fileUrl = getFileUrl(req, "surat-keputusan", filename);
 
     await TrxSkDinasKabkota.create({
       id_ref_beasiswa: idBeasiswa,
@@ -209,7 +218,7 @@ exports.uploadFileSKProvinsi = async (req, res) => {
     const { idBeasiswa } = req.params;
     const { kode_kab, kode_prov, nama_dinas_kabkota, nama_dinas_provinsi } = req.user;
     const { filename } = req.file;
-    const fileUrl = getFileUrl(req, "persyaratan", filename);
+    const fileUrl = getFileUrl(req, "surat-keputusan", filename);
 
     await TrxSkDinasProvinsi.create({
       id_ref_beasiswa: idBeasiswa,
@@ -223,6 +232,60 @@ exports.uploadFileSKProvinsi = async (req, res) => {
     });
 
     return successResponse(res, "File berhasil diupload", { filename, file: fileUrl });
+  } catch (error) {
+    console.error(error);
+    return errorResponse(res, "Internal Server Error");
+  }
+};
+
+exports.uploadFileBA = async (req, res) => {
+  try {
+    if (!req.file) return failResponse(res, "File tidak ditemukan");
+
+    const { idBeasiswa } = req.params;
+    const { kode_kab, kode_prov, nama_dinas_kabkota, nama_dinas_provinsi } = req.user;
+    const { filename } = req.file;
+    const fileUrl = getFileUrl(req, "berita-acara", filename);
+
+    await TrxBaDinasKabkota.create({
+      id_ref_beasiswa: idBeasiswa,
+      kode_dinas_kabkota: kode_kab,
+      nama_dinas_kabkota: nama_dinas_kabkota ?? null,
+      kode_dinas_provinsi: kode_prov,
+      nama_dinas_provinsi: nama_dinas_provinsi ?? null,
+      filename,
+      uploaded_by: req.user?.nama ?? null,
+      created_at: new Date(),
+    });
+
+    return successResponse(res, "File BA berhasil diupload", { filename, file: fileUrl });
+  } catch (error) {
+    console.error(error);
+    return errorResponse(res, "Internal Server Error");
+  }
+};
+
+exports.uploadFileBAProvinsi = async (req, res) => {
+  try {
+    if (!req.file) return failResponse(res, "File tidak ditemukan");
+
+    const { idBeasiswa } = req.params;
+    const { kode_kab, kode_prov, nama_dinas_kabkota, nama_dinas_provinsi } = req.user;
+    const { filename } = req.file;
+    const fileUrl = getFileUrl(req, "berita-acara", filename);
+
+    await TrxBaDinasProvinsi.create({
+      id_ref_beasiswa: idBeasiswa,
+      kode_dinas_kabkota: kode_kab,
+      nama_dinas_kabkota: nama_dinas_kabkota ?? null,
+      kode_dinas_provinsi: kode_prov,
+      nama_dinas_provinsi: nama_dinas_provinsi ?? null,
+      filename,
+      uploaded_by: req.user?.nama ?? null,
+      created_at: new Date(),
+    });
+
+    return successResponse(res, "File BA Provinsi berhasil diupload", { filename, file: fileUrl });
   } catch (error) {
     console.error(error);
     return errorResponse(res, "Internal Server Error");

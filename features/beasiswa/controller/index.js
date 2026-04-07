@@ -16,11 +16,178 @@ const {
   TrxSkDinasKabkota,
   TrxBaDinasKabkota,
   TrxLogKeputusan,
+  TrxNilaiRapor,
+  RefProgramStudi,
   sequelize
 } = require("../../../models");
 const { getFileUrl } = require("../../../common/middleware/upload_middleware");
 const ExcelJS = require("exceljs");
 const nodemailer = require("nodemailer");
+const archiver = require("archiver");
+const path = require("path");
+const fs = require("fs");
+const baseUploadDir = process.env.FILE_URL;
+
+const FOLDER_MAP = {
+  foto: "foto",
+  foto_depan: "foto_depan",
+  foto_samping_kiri: "foto_samping_kiri",
+  foto_samping_kanan: "foto_samping_kanan",
+  foto_belakang: "foto_belakang",
+  persyaratan: "persyaratan",
+  berita_acara: "berita_acara",
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Utils
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Resolve absolute path file di disk */
+const resolveFilePath = (folderKey, filename) => {
+  const folder = FOLDER_MAP[folderKey] ?? folderKey;
+  return path.join(baseUploadDir, folder, filename);
+};
+
+/** Tambah file ke archive HANYA jika file ada di disk (skip jika tidak ada) */
+const addFileToArchive = (archive, folderKey, filename, archivePath) => {
+  if (!filename) return;
+  const fullPath = resolveFilePath(folderKey, filename);
+  if (fs.existsSync(fullPath)) {
+    archive.file(fullPath, { name: archivePath });
+  } else {
+    console.warn(`[ZIP] File tidak ditemukan, dilewati: ${fullPath}`);
+  }
+};
+
+/** Nama folder aman untuk ZIP (dari kode_pendaftaran / id) */
+const safeFolderName = (data) =>
+  (data.kode_pendaftaran || `trx_${data.id_trx_beasiswa}`)
+    .replace(/[^a-zA-Z0-9_\-]/g, "_");
+
+/** Nama file aman dari nama dokumen */
+const safeDocName = (nama, id, maxLen = 50) =>
+  (nama || `dok_${id}`)
+    .replace(/[^a-zA-Z0-9_\- ]/g, "_")
+    .substring(0, maxLen)
+    .trim();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: foto
+// Field name di upload_middleware.js = folder name (foto, foto_depan, dst.)
+// ─────────────────────────────────────────────────────────────────────────────
+const FOTO_FIELDS = [
+  { field: "foto", label: "foto_wajah" },
+  { field: "foto_depan", label: "foto_depan" },
+  { field: "foto_samping_kiri", label: "foto_samping_kiri" },
+  { field: "foto_samping_kanan", label: "foto_samping_kanan" },
+  { field: "foto_belakang", label: "foto_belakang" },
+];
+
+const addFotoToArchive = (archive, data, folderPrefix) => {
+  for (const { field, label } of FOTO_FIELDS) {
+    if (data[field]) {
+      const ext = path.extname(data[field]) || ".jpg";
+      addFileToArchive(
+        archive,
+        field,                                  // key = fieldname = folder di disk
+        data[field],                            // filename di disk
+        `${folderPrefix}/foto/${label}${ext}`   // path di dalam ZIP
+      );
+    }
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: dokumen umum (disimpan di folder "persyaratan")
+// ─────────────────────────────────────────────────────────────────────────────
+const addDokumenUmumToArchive = async (archive, idTrxBeasiswa, folderPrefix) => {
+  const dokList = await TrxDokumenUmum.findAll({
+    where: { id_trx_beasiswa: idTrxBeasiswa },
+    attributes: ["id", "nama_dokumen_persyaratan", "file"],
+  });
+  console.log(dokList);
+
+  for (const dok of dokList) {
+    if (!dok.file) continue;
+    const ext = path.extname(dok.file) || ".pdf";
+    const nameSafe = safeDocName(dok.nama_dokumen_persyaratan, dok.id);
+    addFileToArchive(
+      archive,
+      "persyaratan",                                         // folder di disk
+      dok.file,
+      `${folderPrefix}/dokumen_umum/${nameSafe}${ext}`      // path di ZIP
+    );
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: dokumen khusus (juga disimpan di folder "persyaratan")
+// ─────────────────────────────────────────────────────────────────────────────
+const addDokumenKhususToArchive = async (archive, idTrxBeasiswa, folderPrefix) => {
+  const dokList = await TrxDokumenKhusus.findAll({
+    where: { id_trx_beasiswa: idTrxBeasiswa },
+    attributes: ["id", "nama_dokumen_persyaratan", "file"],
+  });
+
+  for (const dok of dokList) {
+    if (!dok.file) continue;
+    const ext = path.extname(dok.file) || ".pdf";
+    const nameSafe = safeDocName(dok.nama_dokumen_persyaratan, dok.id);
+    addFileToArchive(
+      archive,
+      "persyaratan",
+      dok.file,
+      `${folderPrefix}/dokumen_khusus/${nameSafe}${ext}`
+    );
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: gabungkan sesuai kategori
+// ─────────────────────────────────────────────────────────────────────────────
+const addDokumenByKategori = async (archive, data, folderPrefix, kategori) => {
+  const k = kategori || "all";
+  if (k === "all" || k === "foto") {
+    addFotoToArchive(archive, data, folderPrefix);
+  }
+  if (k === "all" || k === "dokumen_umum") {
+    await addDokumenUmumToArchive(archive, data.id_trx_beasiswa, folderPrefix);
+  }
+  if (k === "all" || k === "dokumen_khusus") {
+    await addDokumenKhususToArchive(archive, data.id_trx_beasiswa, folderPrefix);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared: setup header + archiver + pipe ke res
+// ─────────────────────────────────────────────────────────────────────────────
+const createZipResponse = (res, filename) => {
+  res.setHeader("Content-Type", "application/zip");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="${encodeURIComponent(filename)}"`
+  );
+
+  const archive = archiver("zip", { zlib: { level: 6 } });
+  archive.pipe(res);
+
+  // Warning = file tidak ada di disk → log tapi lanjutkan ZIP
+  archive.on("warning", (err) => {
+    if (err.code === "ENOENT") {
+      console.warn("[ZIP] File not found warning:", err.message);
+    } else {
+      console.error("[ZIP] Archiver warning:", err);
+    }
+  });
+
+  archive.on("error", (err) => {
+    console.error("[ZIP] Archiver error:", err);
+    if (!res.headersSent) res.status(500).end("Archive error");
+  });
+
+  return archive;
+};
+
 
 const buildWilayahFilter = ({ kode_prov, kode_kab }) => {
   const filter = {};
@@ -64,7 +231,7 @@ exports.getRekapLulusAdministrasi = async (req, res) => {
         ],
         [
           sequelize.literal(`SUM(CASE WHEN kerja_kode_kab = tinggal_kode_kab AND id_flow = 13 THEN 1 ELSE 0 END)`),
-          "jml_kebun"
+          "jml_bekerja" // <--- UBAH DISINI: dari "jml_kebun" menjadi "jml_bekerja"
         ]
       ],
       group: ["tinggal_kode_kab", "tinggal_prov", "tinggal_kab_kota"],
@@ -141,7 +308,6 @@ exports.updateFlagKewilayahan = async (req, res) => {
     const flagVal = parseInt(flag_kewilayahan);
 
     // 1. Siapkan payload update menggunakan literal
-    // Ini memaksa MySQL mengambil nilai mentah dari kolom yang ada di row tersebut
     let updatePayload = {
       flag_kewilayahn: flagVal,
     };
@@ -153,7 +319,7 @@ exports.updateFlagKewilayahan = async (req, res) => {
       updatePayload.kode_dinas_kabkota = literal('tinggal_kode_kab');
       updatePayload.nama_dinas_kabkota = literal('tinggal_kab_kota');
     } else if (flagVal === 1) {
-      // Jika SESUAI KEBUN (1)
+      // Jika SESUAI BEKERJA (1)  <--- UBAH KOMENTAR
       updatePayload.kode_dinas_provinsi = literal('kerja_kode_prov');
       updatePayload.nama_dinas_provinsi = literal('kerja_prov');
       updatePayload.kode_dinas_kabkota = literal('kerja_kode_kab');
@@ -166,7 +332,8 @@ exports.updateFlagKewilayahan = async (req, res) => {
         updatePayload,
         { where: { id_flow: 13 } }
       );
-      logKeterangan = `Update massal kewilayahan ke ${flagVal === 1 ? 'ALAMAT KEBUN' : 'ALAMAT KTP'}`;
+      // UBAH TEKS LOG DISINI
+      logKeterangan = `Update massal kewilayahan ke ${flagVal === 1 ? 'ALAMAT BEKERJA' : 'ALAMAT KTP'}`;
     }
     else if (Array.isArray(id_trx_beasiswa)) {
       if (id_trx_beasiswa.length === 0) return failResponse(res, "Tidak ada data yang dipilih.");
@@ -174,14 +341,16 @@ exports.updateFlagKewilayahan = async (req, res) => {
         updatePayload,
         { where: { id_trx_beasiswa: { [Op.in]: id_trx_beasiswa } } }
       );
-      logKeterangan = `Update kewilayahan ${id_trx_beasiswa.length} pendaftar menjadi ${flagVal === 1 ? 'SESUAI KEBUN' : 'SESUAI KTP'}`;
+      // UBAH TEKS LOG DISINI
+      logKeterangan = `Update kewilayahan ${id_trx_beasiswa.length} pendaftar menjadi ${flagVal === 1 ? 'SESUAI BEKERJA' : 'SESUAI KTP'}`;
     }
     else if (id_trx_beasiswa) {
       await TrxBeasiswa.update(
         updatePayload,
         { where: { id_trx_beasiswa: id_trx_beasiswa } }
       );
-      logKeterangan = `Update kewilayahan 1 pendaftar menjadi ${flagVal === 1 ? 'SESUAI KEBUN' : 'SESUAI KTP'}`;
+      // UBAH TEKS LOG DISINI
+      logKeterangan = `Update kewilayahan 1 pendaftar menjadi ${flagVal === 1 ? 'SESUAI BEKERJA' : 'SESUAI KTP'}`;
     } else {
       return failResponse(res, "Target update tidak valid.");
     }
@@ -361,7 +530,7 @@ exports.getTransaksiBeasiswaByPaginationSeleksiAdministrasiDaerah = async (
 
 
     if (dinas == "kabkota") {
-      baseCondition.id_flow = 6;
+      baseCondition.id_flow != [0, 1, 2,];
     } else if (dinas == "provinsi") {
       baseCondition.id_flow = 7;
     }
@@ -2470,6 +2639,31 @@ exports.getDetailPendaftar = async (req, res) => {
   }
 };
 // Get pilihan program studi dengan format untuk form
+// exports.getPilihanProgramStudiForForm = async (req, res) => {
+//   try {
+//     const { idTrxBeasiswa } = req.params;
+
+//     const pilihan = await TrxPilihanProgramStudi.findAll({
+//       where: { id_trx_beasiswa: idTrxBeasiswa },
+//       order: [["id", "ASC"]],
+//     });
+
+//     const formatted = pilihan.map((item) => ({
+//       perguruan_tinggi: item.id_pt && item.nama_pt
+//         ? `${item.id_pt}#${item.nama_pt}`
+//         : "",
+//       program_studi: item.id_prodi && item.nama_prodi
+//         ? `${item.id_prodi}#${item.nama_prodi}`
+//         : "",
+//     }));
+
+//     return successResponse(res, "Data berhasil dimuat", formatted);
+//   } catch (error) {
+//     console.error(error);
+//     return errorResponse(res, "Internal Server Error");
+//   }
+// };
+
 exports.getPilihanProgramStudiForForm = async (req, res) => {
   try {
     const { idTrxBeasiswa } = req.params;
@@ -2479,14 +2673,68 @@ exports.getPilihanProgramStudiForForm = async (req, res) => {
       order: [["id", "ASC"]],
     });
 
-    const formatted = pilihan.map((item) => ({
-      perguruan_tinggi: item.id_pt && item.nama_pt
-        ? `${item.id_pt}#${item.nama_pt}`
-        : "",
-      program_studi: item.id_prodi && item.nama_prodi
-        ? `${item.id_prodi}#${item.nama_prodi}`
-        : "",
-    }));
+    if (!pilihan.length) {
+      return successResponse(res, "Data berhasil dimuat", []);
+    }
+
+    // Ambil jenjang dari ref_program_studi untuk semua id_prodi yang tersimpan
+    const prodiIds = pilihan
+      .map((p) => p.id_prodi)
+      .filter(Boolean);
+
+    const prodiList = prodiIds.length
+      ? await RefProgramStudi.findAll({
+        where: { id_prodi: { [Op.in]: prodiIds } },
+        attributes: ["id_prodi", "jenjang"],
+        raw: true,
+      })
+      : [];
+
+    // Map id_prodi → jenjang
+    const jenjangMap = new Map(
+      prodiList.map((p) => [p.id_prodi, p.jenjang])
+    );
+
+    // Hitung berapa slot d1d2 per PT yang sudah tersimpan
+    // agar slot ke-2 dari PT yang sama bisa dikategorikan non_d1d2
+    const ptD1D2Count = new Map(); // id_pt → jumlah slot d1d2 yang sudah ditemui
+
+    const formatted = pilihan.map((item) => {
+      const jenjang = jenjangMap.get(item.id_prodi) ?? null;
+      const isD1D2 = ["D1", "D2"].includes(jenjang);
+
+      // Tentukan slot_type:
+      // Jika jenjang D1/D2 → "d1d2"
+      // Jika jenjang lain DAN PT-nya punya row D1/D2 lain → "non_d1d2"
+      // Jika jenjang lain DAN PT-nya tidak punya D1/D2 → "all"
+      let slot_type;
+
+      if (isD1D2) {
+        slot_type = "d1d2";
+      } else {
+        // Cek apakah PT ini punya row lain dengan jenjang D1/D2
+        const ptIdKey = item.id_pt;
+        const ptHasD1D2Row = pilihan.some(
+          (other) =>
+            other.id_pt === ptIdKey &&
+            other.id !== item.id &&
+            ["D1", "D2"].includes(jenjangMap.get(other.id_prodi) ?? "")
+        );
+        slot_type = ptHasD1D2Row ? "non_d1d2" : "all";
+      }
+
+      return {
+        perguruan_tinggi:
+          item.id_pt && item.nama_pt
+            ? `${item.id_pt}#${item.nama_pt}`
+            : "",
+        program_studi:
+          item.id_prodi && item.nama_prodi
+            ? `${item.id_prodi}#${item.nama_prodi}`
+            : "",
+        slot_type, // ← di-derive, tidak perlu kolom baru
+      };
+    });
 
     return successResponse(res, "Data berhasil dimuat", formatted);
   } catch (error) {
@@ -2494,6 +2742,8 @@ exports.getPilihanProgramStudiForForm = async (req, res) => {
     return errorResponse(res, "Internal Server Error");
   }
 };
+
+
 // Get detail pilihan program studi dengan nama PT dan Prodi untuk parsing data existing
 // exports.getPilihanProgramStudiWithDetails = async (req, res) => {
 //   try {
@@ -2749,7 +2999,6 @@ exports.getCatatanVerifikasi = async (req, res) => {
   }
 };
 
-// Update tag dinas kabkota
 exports.updateTagDinasKabkota = async (req, res) => {
   try {
     const { idTrxBeasiswa } = req.params;
@@ -2759,12 +3008,22 @@ exports.updateTagDinasKabkota = async (req, res) => {
       return failResponse(res, "Nilai tag tidak valid");
     }
 
+    const updatePayload = {
+      tag_dinas_kabkot: "Y",
+      nama_verifikator_dinas_kabkota: req.user?.nama ?? null,
+      timestamp_dinas_kabkota: new Date(),
+    };
+
+    if (tag === "Y") {
+      updatePayload.hasil_dinas_kabkot = "1"; // Rekomendasi
+    } else {
+      updatePayload.hasil_dinas_kabkot = "2"; // Tidak Rekomendasi
+    }
+
     await TrxBeasiswa.update(
-      {
-        tag_dinas_kabkot: tag,
-        nama_verifikator_dinas_kabkota: req.user?.nama ?? null,
-        timestamp_dinas_kabkota: new Date(),
-      },
+
+      updatePayload
+      ,
       { where: { id_trx_beasiswa: idTrxBeasiswa } },
     );
 
@@ -2775,17 +3034,29 @@ exports.updateTagDinasKabkota = async (req, res) => {
   }
 };
 
-// Update tag dinas provinsi
 exports.updateTagDinasProvinsi = async (req, res) => {
   try {
     const { idTrxBeasiswa } = req.params;
+    const { tag } = req.body;
+
+    if (!tag || !["Y", "N"].includes(tag)) {
+      return failResponse(res, "Nilai tag tidak valid");
+    }
+
+    const updatePayload = {
+      tag_dinas_provinsi: "Y",
+      nama_verifikator_dinas_provinsi: req.user?.nama ?? null,
+      timestamp_dinas_provinsi: new Date(),
+    };
+
+    if (tag === "Y") {
+      updatePayload.hasil_dinas_provinsi = "1"; // Rekomendasi
+    } else {
+      updatePayload.hasil_dinas_provinsi = "2"; // Tidak Rekomendasi
+    }
 
     await TrxBeasiswa.update(
-      {
-        tag_dinas_provinsi: "Y",
-        nama_verifikator_dinas_provinsi: req.user?.nama ?? null,
-        timestamp_dinas_provinsi: new Date(),
-      },
+      updatePayload,
       { where: { id_trx_beasiswa: idTrxBeasiswa } },
     );
 
@@ -3122,9 +3393,17 @@ exports.getPendaftarForAssignment = async (req, res) => {
     } else if (filter === "unassigned" || filter === "filter-unassigned") {
       baseCondition.id_verifikator = null;
       baseCondition.id_flow = { [Op.or]: [1] };
+    } else if (filter === "locked") {
+      baseCondition.id_verifikator = null;
+      baseCondition.id_flow = { [Op.or]: [1] };
+      baseCondition.tag_lock_selektor = "1";
+    } else if (filter === "unlocked") {
+      baseCondition.id_verifikator = null;
+      baseCondition.id_flow = { [Op.or]: [1] };
+      baseCondition.tag_lock_selektor = { [Op.ne]: "1" };
     }
 
-    // ── Search ───────────────────────────────────────────────────────────────
+
     const whereCondition = search
       ? {
         ...baseCondition,
@@ -3161,13 +3440,87 @@ exports.getPendaftarForAssignment = async (req, res) => {
       offset,
       order: [["id_trx_beasiswa", "ASC"]],
     });
+    // Di controller, setelah query findAndCountAll rows
+    const idList = rows.map(r => r.id_trx_beasiswa);
+
+    const [dokUmumAll, dokKhususAll] = await Promise.all([
+      TrxDokumenUmum.findAll({
+        where: { id_trx_beasiswa: { [Op.in]: idList } },
+        attributes: ["id", "id_trx_beasiswa", "nama_dokumen_persyaratan", "file", "status_verifikasi"],
+      }),
+      TrxDokumenKhusus.findAll({
+        where: { id_trx_beasiswa: { [Op.in]: idList } },
+        attributes: ["id", "id_trx_beasiswa", "nama_dokumen_persyaratan", "file", "status_verifikasi"],
+      }),
+    ]);
+
+    // Group per id_trx_beasiswa
+    const umumMap = {};
+    const khususMap = {};
+    for (const d of dokUmumAll) {
+      if (!umumMap[d.id_trx_beasiswa]) umumMap[d.id_trx_beasiswa] = [];
+      umumMap[d.id_trx_beasiswa].push({
+        id: d.id,
+        nama_dokumen_persyaratan: d.nama_dokumen_persyaratan,
+        file: getFileUrl(req, "persyaratan", d.file),  // ← penting: resolve URL publik
+        status_verifikasi: d.status_verifikasi,
+      });
+    }
+    for (const d of dokKhususAll) {
+      if (!khususMap[d.id_trx_beasiswa]) khususMap[d.id_trx_beasiswa] = [];
+      khususMap[d.id_trx_beasiswa].push({
+        id: d.id,
+        nama_dokumen_persyaratan: d.nama_dokumen_persyaratan,
+        file: getFileUrl(req, "persyaratan", d.file),
+        status_verifikasi: d.status_verifikasi,
+      });
+    }
+
+    // Attach ke setiap row
+    const enrichedRows = rows.map(r => ({
+      ...r.toJSON(),
+      dokumen_umum: umumMap[r.id_trx_beasiswa] ?? [],
+      dokumen_khusus: khususMap[r.id_trx_beasiswa] ?? [],
+    }));
+    // ── Summary dokumen (agregat, bukan per-page) ─────────────────
+    const [summaryFoto, summaryDokUmum, summaryDokKhusus] = await Promise.all([
+      // Hitung pendaftar yang punya minimal 1 foto (proxy: foto != null)
+      TrxBeasiswa.count({
+        where: { ...whereCondition, foto: { [Op.ne]: null } },
+      }),
+      TrxDokumenUmum.count({
+        where: {
+          id_trx_beasiswa: {
+            [Op.in]: rows.map((r) => r.id_trx_beasiswa),
+          },
+        },
+      }),
+      TrxDokumenKhusus.count({
+        where: {
+          id_trx_beasiswa: {
+            [Op.in]: rows.map((r) => r.id_trx_beasiswa),
+          },
+        },
+      }),
+    ]);
 
     return successResponse(res, "Data berhasil dimuat", {
-      result: rows,
+      result: enrichedRows,
       total: count,
       current_page: page,
       total_pages: Math.ceil(count / limit),
+      summary: {                          // ← tambahan
+        total_foto: summaryFoto,
+        total_dok_umum: summaryDokUmum,
+        total_dok_khusus: summaryDokKhusus,
+      },
     });
+    // return successResponse(res, "Data berhasil dimuat", {
+    //   result: rows,
+    //   total: count,
+    //   current_page: page,
+    //   total_pages: Math.ceil(count / limit),
+    // });
   } catch (error) {
     console.error(error);
     return errorResponse(res, "Internal Server Error");
@@ -3227,7 +3580,6 @@ exports.assignVerifikatorByJumlah = async (req, res) => {
   try {
     const { assignments } = req.body;
 
-    // ── Validasi input ───────────────────────────────────────────────────────
     if (!Array.isArray(assignments) || assignments.length === 0) {
       await t.rollback();
       return failResponse(res, "assignments wajib diisi dan tidak boleh kosong");
@@ -3249,7 +3601,7 @@ exports.assignVerifikatorByJumlah = async (req, res) => {
     const pool = await TrxBeasiswa.findAll({
       where: {
         id_ref_beasiswa: 1,
-        id_flow: { [Op.or]: [1] }, // exclude draft
+        id_flow: { [Op.or]: [1] },
         id_verifikator: { [Op.is]: null },
       },
       attributes: ["id_trx_beasiswa"],
@@ -3258,11 +3610,12 @@ exports.assignVerifikatorByJumlah = async (req, res) => {
       transaction: t,
     });
 
+
     if (pool.length < totalDiminta) {
       await t.rollback();
       return failResponse(
         res,
-        `Hanya tersedia ${pool.length} pendaftar belum assign, tetapi total yang diminta ${totalDiminta}`,
+        `Hanya tersedia ${pool.length} pendaftar yang sudah di-lock dan belum assign, tetapi total yang diminta ${totalDiminta}. Pastikan pendaftar sudah di-lock sebelum assign.`,
       );
     }
 
@@ -3289,6 +3642,7 @@ exports.assignVerifikatorByJumlah = async (req, res) => {
         {
           where: {
             id_trx_beasiswa: { [Op.in]: ids },
+            tag_lock_selektor: 1,
           },
           transaction: t,
         },
@@ -3331,7 +3685,6 @@ exports.updateKlusterBeasiswa = async (req, res) => {
 
     const namaKluster = klusterInt === 1 ? "Reguler" : "Afirmasi";
 
-    // ✅ Raw query — tidak bergantung pada definisi model
     const [result] = await sequelize.query(
       `UPDATE trx_beasiswa 
        SET id_kluster = :id_kluster, 
@@ -3350,7 +3703,6 @@ exports.updateKlusterBeasiswa = async (req, res) => {
 
     console.log("raw query result:", result);
 
-    // sequelize.QueryTypes.UPDATE mengembalikan [affectedRows]
     if (result === 0) {
       return failResponse(res, "Data tidak ditemukan.");
     }
@@ -3676,28 +4028,40 @@ exports.downloadPendaftarAssignment = async (req, res) => {
     // Header
     worksheet.getRow(1).values = [
       "No",
-      "Kode Pendaftaran",
-      "Nama Lengkap",
-      "NIK",
+      "Tanggal",
+      "Waktu",
+      "Kode Peserta",
+      "Nama Peserta",
       "Jalur",
-      "Provinsi",
-      "Kabupaten/Kota",
-      "Status Flow",
+      "NIK",
+      "NKK",
+      "No HP",
+      "L/P (Jenis Kelamin)",
+      "Tanggal Lahir",
+      "Tempat Lahir",
+      "Tahun Lulus",
+      "Buta Warna",
+      "Status",
       "Nama Selektor",
-      "Tanggal Daftar",
     ];
 
     worksheet.columns = [
       { key: "no", width: 6 },
+      { key: "tanggal", width: 20 },
+      { key: "waktu", width: 20 },
       { key: "kode_pendaftaran", width: 20 },
       { key: "nama_lengkap", width: 30 },
-      { key: "nik", width: 20 },
       { key: "jalur", width: 20 },
-      { key: "prov", width: 25 },
-      { key: "kabkota", width: 25 },
+      { key: "nik", width: 20 },
+      { key: "nkk", width: 25 },
+      { key: "no_hp", width: 25 },
+      { key: "jenis_kelamin", width: 25 },
+      { key: "tanggal_lahir", width: 25 },
+      { key: "tempat_lahir", width: 25 },
+      { key: "tahun_lulus", width: 25 },
+      { key: "buta_warna", width: 25 },
       { key: "flow", width: 25 },
       { key: "selektor", width: 25 },
-      { key: "tanggal_daftar", width: 20 },
     ];
 
     rows.forEach((row, index) => {
@@ -3770,7 +4134,6 @@ const buildVerifikasiDaerahWhere = ({ idBeasiswa, kodeProvinsi, kodeKabkota, din
     baseCondition.id_flow = 7;
   }
 
-  // Override id_flow jika filter spesifik dikirim
   if (idFlow) {
     baseCondition.id_flow = Number(idFlow);
   }
@@ -3990,5 +4353,250 @@ exports.downloadVerifikasiProvinsi = async (req, res) => {
   } catch (error) {
     console.error("Error downloadVerifikasiProvinsi:", error);
     return errorResponse(res, "Gagal mengunduh file Excel");
+  }
+};
+
+exports.saveNilaiRapor = async (req, res) => {
+  try {
+    const { idTrxBeasiswa } = req.params;
+    const {
+      id_ref_beasiswa,
+      nilai_semester_1,
+      nilai_semester_2,
+      nilai_semester_3,
+      nilai_semester_4,
+      nilai_semester_5,
+    } = req.body;
+
+    if (!id_ref_beasiswa) {
+      return failResponse(res, "id_ref_beasiswa wajib diisi");
+    }
+
+    const normalize = (val) => {
+      if (val === "" || val === "null" || val === undefined) return null;
+      return val;
+    };
+
+    const data = {
+      id_ref_beasiswa,
+      id_trx_beasiswa: idTrxBeasiswa,
+      nilai_semester_1: normalize(nilai_semester_1),
+      nilai_semester_2: normalize(nilai_semester_2),
+      nilai_semester_3: normalize(nilai_semester_3),
+      nilai_semester_4: normalize(nilai_semester_4),
+      nilai_semester_5: normalize(nilai_semester_5),
+      uploaded_by: req.user?.nama ?? null,
+    };
+
+    const existing = await TrxNilaiRapor.findOne({
+      where: { id_trx_beasiswa: idTrxBeasiswa },
+    });
+
+    if (existing) {
+      await TrxNilaiRapor.update(data, {
+        where: { id_trx_beasiswa: idTrxBeasiswa },
+      });
+    } else {
+      await TrxNilaiRapor.create({
+        ...data,
+        created_at: new Date(),
+      });
+    }
+
+    return successResponse(res, "Nilai rapor berhasil disimpan");
+  } catch (error) {
+    console.error("Error saveNilaiRapor:", error);
+    return errorResponse(res, "Internal Server Error");
+  }
+};
+
+// Get nilai rapor by id_trx_beasiswa
+exports.getNilaiRapor = async (req, res) => {
+  try {
+    const { idTrxBeasiswa } = req.params;
+
+    const data = await TrxNilaiRapor.findOne({
+      where: { id_trx_beasiswa: idTrxBeasiswa },
+    });
+
+    return successResponse(res, "Data berhasil dimuat", data ?? null);
+  } catch (error) {
+    console.error("Error getNilaiRapor:", error);
+    return errorResponse(res, "Internal Server Error");
+  }
+};
+
+exports.toggleLockSelektor = async (req, res) => {
+  try {
+    const { id_trx_beasiswa, lock } = req.body;
+
+    if (!id_trx_beasiswa) {
+      return failResponse(res, "id_trx_beasiswa wajib diisi");
+    }
+
+    const tagValue = lock ? "1" : "0";
+    const timestampValue = lock ? new Date() : null;
+
+    const whereClause = Array.isArray(id_trx_beasiswa)
+      ? { id_trx_beasiswa: { [Op.in]: id_trx_beasiswa } }
+      : { id_trx_beasiswa };
+
+    const [updatedCount] = await TrxBeasiswa.update(
+      {
+        tag_lock_selektor: tagValue,
+        timestamp_lock_selektor: timestampValue,
+        updated_at: new Date(),
+      },
+      { where: whereClause }
+    );
+
+    return successResponse(
+      res,
+      `Berhasil ${lock ? "mengunci" : "membuka kunci"} ${updatedCount} pendaftar`,
+      { updated: updatedCount, locked: lock }
+    );
+  } catch (error) {
+    console.error("Error toggleLockSelektor:", error);
+    return errorResponse(res, "Internal Server Error");
+  }
+};
+
+exports.toggleLockSelektorGlobal = async (req, res) => {
+  try {
+    const { lock } = req.body;
+
+    const tagValue = lock ? "1" : "0";
+    const timestampValue = lock ? new Date() : null;
+
+    const [updatedCount] = await TrxBeasiswa.update(
+      {
+        tag_lock_selektor: tagValue,
+        timestamp_lock_selektor: timestampValue,
+        updated_at: new Date(),
+      },
+      {
+        where: {
+          id_ref_beasiswa: 1,
+          id_flow: { [Op.or]: [1] },
+          id_verifikator: null,
+        },
+      }
+    );
+
+    return successResponse(
+      res,
+      `Berhasil ${lock ? "menguncis" : "membuka kuncis"} ${updatedCount} pendaftar`,
+      { updated: updatedCount, locked: lock }
+    );
+  } catch (error) {
+    console.error("Error toggleLockSelektorGlobal:", error);
+    return errorResponse(res, "Internal Server Error");
+  }
+};
+
+exports.kembalikanKeAdminDitjenbun = async (req, res) => {
+  try {
+    const { idTrxBeasiswa } = req.params;
+
+    const trx = await TrxBeasiswa.findOne({
+      where: { id_trx_beasiswa: idTrxBeasiswa },
+      attributes: ["id_trx_beasiswa", "id_flow"],
+    });
+
+    if (!trx) {
+      return failResponse(res, "Data tidak ditemukan");
+    }
+
+    await TrxBeasiswa.update(
+      {
+        id_flow: 13,
+        flow: "Dikembalikan - Pembagian Wilayah",
+        updated_at: new Date(),
+      },
+      { where: { id_trx_beasiswa: idTrxBeasiswa } }
+    );
+
+    return successResponse(res, "Berhasil dikembalikan ke admin Ditjenbun");
+  } catch (error) {
+    console.error("Error kembalikanKeAdminDitjenbun:", error);
+    return errorResponse(res, "Internal Server Error");
+  }
+};
+
+exports.downloadPendaftarZip = async (req, res) => {
+  try {
+    const { idTrxBeasiswa } = req.params;
+    const kategori = req.query.kategori || "all";
+
+    const trx = await TrxBeasiswa.findOne({
+      where: { id_trx_beasiswa: idTrxBeasiswa },
+    });
+    console.log(trx);
+
+    if (!trx) {
+      return res.status(404).json({ message: "Data tidak ditemukan" });
+    }
+
+    const data = trx.toJSON();
+    const folderName = safeFolderName(data);
+    const zipFilename = `dokumen_${folderName}_${kategori}.zip`;
+
+    const archive = createZipResponse(res, zipFilename);
+    await addDokumenByKategori(archive, data, folderName, kategori);
+    await archive.finalize();
+  } catch (error) {
+    console.error("Error downloadPendaftarZip:", error);
+    if (!res.headersSent) {
+      res.status(500).json({ message: "Internal Server Error" });
+    }
+  }
+};
+
+exports.downloadBulkZip = async (req, res) => {
+  try {
+    const { id_trx_beasiswa_list, kategori = "all", id_jalur } = req.body;
+    console.log(req.body);
+
+    // Validasi
+    if (
+      !Array.isArray(id_trx_beasiswa_list) ||
+      id_trx_beasiswa_list.length === 0
+    ) {
+      return res
+        .status(400)
+        .json({ message: "id_trx_beasiswa_list wajib diisi dan tidak boleh kosong" });
+    }
+
+    const MAX = 200;
+    const ids = id_trx_beasiswa_list.slice(0, MAX).map(Number);
+
+    const rows = await TrxBeasiswa.findAll({
+      where: { id_trx_beasiswa: { [Op.in]: ids } },
+    });
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "Tidak ada data ditemukan" });
+    }
+
+    // Nama file ZIP
+    const jalurLabel = id_jalur ? `_jalur${id_jalur}` : "";
+    const catLabel = kategori !== "all" ? `_${kategori}` : "";
+    const ts = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const zipFilename = `bulk_dokumen${jalurLabel}${catLabel}_${ts}.zip`;
+
+    const archive = createZipResponse(res, zipFilename);
+
+    for (const trx of rows) {
+      const data = trx.toJSON();
+      const folderPrefix = safeFolderName(data);
+      await addDokumenByKategori(archive, data, folderPrefix, kategori);
+    }
+
+    await archive.finalize();
+  } catch (error) {
+    console.error("Error downloadBulkZip:", error);
+    if (!res.headersSent) {
+      res.status(500).json({ message: "Internal Server Error" });
+    }
   }
 };

@@ -57,6 +57,13 @@ const {
   downloadPendaftarAssignment,
   downloadVerifikasiKabkota,
   downloadVerifikasiProvinsi,
+  saveNilaiRapor,
+  getNilaiRapor,
+  toggleLockSelektorGlobal,
+  toggleLockSelektor,
+  kembalikanKeAdminDitjenbun,
+  downloadPendaftarZip,
+  downloadBulkZip
 } = require("../controller");
 const {
   uploadConfigs,
@@ -169,12 +176,18 @@ router.get("/assignment/download", downloadPendaftarAssignment);
 router.get("/download-verifikasi-kabkota", downloadVerifikasiKabkota);
 router.get("/download-verifikasi-provinsi", downloadVerifikasiProvinsi);
 
-// router.get(
-//   "/:beasiswaId/ba-kabkota", getBaKabkotaByProvinsi,
-// );
 router.get("/:idTrxBeasiswa/ba-kabkota", getBaKabkotaByProvinsi)
 router.post(
   "/assignment/assign-by-jumlah", assignVerifikatorByJumlah,
 );
+router.get("/:idTrxBeasiswa/nilai-rapor", getNilaiRapor);
+router.post("/:idTrxBeasiswa/nilai-rapor", saveNilaiRapor);
+
+router.post("/assignment/lock", toggleLockSelektor);
+router.post("/assignment/lock-global", toggleLockSelektorGlobal);
+router.patch("/:idTrxBeasiswa/kembalikan-ke-admin", kembalikanKeAdminDitjenbun);
+
+router.get("/download/pendaftar-zip/:idTrxBeasiswa", downloadPendaftarZip);
+router.post("/download/bulk-zip", downloadBulkZip);
 
 module.exports = router;

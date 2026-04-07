@@ -28,7 +28,7 @@ exports.getPendaftarPenelaahan = async (req, res) => {
       where: whereCondition,
       attributes: [
         "id_trx_beasiswa", "nama_lengkap", "nik", "kode_pendaftaran", 
-        "jalur", "nama_kluster", "nilai_temp"
+        "jalur", "nama_kluster", "nilai_temp", "status_wawancara" // <-- DITAMBAHKAN DI SINI
       ],
       limit,
       offset,
@@ -54,7 +54,7 @@ exports.downloadExcelPenelaahan = async (req, res) => {
   try {
     const rows = await TrxBeasiswa.findAll({
       where: { id_flow: 11 },
-      attributes: ["id_trx_beasiswa", "nama_lengkap", "nama_kluster", "nilai_temp"],
+      attributes: ["id_trx_beasiswa", "nama_lengkap", "nama_kluster", "nilai_temp", "status_wawancara"], // <-- DITAMBAHKAN DI SINI
       order: [["nama_lengkap", "ASC"]],
       raw: true
     });
@@ -67,6 +67,7 @@ exports.downloadExcelPenelaahan = async (req, res) => {
       { header: "nama", key: "nama", width: 35 },
       { header: "nilai_akhir", key: "nilai_akhir", width: 15 },
       { header: "kluster", key: "kluster", width: 20 },
+      { header: "status_wawancara", key: "status_wawancara", width: 25 }, // <-- KOLOM EXCEL DITAMBAHKAN
     ];
 
     rows.forEach((row) => {
@@ -75,10 +76,12 @@ exports.downloadExcelPenelaahan = async (req, res) => {
         nama: row.nama_lengkap || "-",
         nilai_akhir: row.nilai_temp || 0, 
         kluster: row.nama_kluster || "-",
+        status_wawancara: row.status_wawancara || "-", // <-- ISI BARIS DITAMBAHKAN
       });
     });
 
-    for (let i = 1; i <= 4; i++) {
+    // Ubah loop styling menjadi sampai kolom ke-5 (sebelumnya 4)
+    for (let i = 1; i <= 5; i++) {
       const cell = worksheet.getRow(1).getCell(i);
       cell.font = { bold: true };
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE0F0FF" } };
@@ -127,20 +130,16 @@ exports.uploadHasilPerankingan = async (req, res) => {
       if (txt.includes("prodi")) prodiCol = colNumber;
     });
 
-    // Looping mulai dari baris ke-2
     for (let i = 2; i <= worksheet.rowCount; i++) {
       const row = worksheet.getRow(i);
       const idTrx = extractVal(row.getCell(idCol));
       const ptFinal = extractVal(row.getCell(ptCol));
       const prodiFinal = extractVal(row.getCell(prodiCol));
-      
-      // Ambil urutan baris murni dari file Excel
       const urutan_excel = i - 1; 
 
       if (!idTrx) continue;
 
       try {
-        // Simpan pt_final, prodi_final, dan URUTANNYA ke database
         await sequelize.query(
           `UPDATE trx_beasiswa SET pt_final = :pt, prodi_final = :prodi, urutan_ranking = :urutan WHERE id_trx_beasiswa = :id AND id_flow = 11`,
           {
@@ -255,5 +254,68 @@ exports.resetHasilPerankingan = async (req, res) => {
   } catch (error) {
     console.error("Error resetHasilPerankingan:", error);
     return errorResponse(res, "Gagal mereset data perankingan.");
+  }
+};
+
+
+exports.downloadExcelSemuaPenelaahan = async (req, res) => {
+  try {
+    const rows = await TrxBeasiswa.findAll({
+      where: { id_flow: 11 },
+      attributes: [
+        "id_trx_beasiswa", "nama_lengkap", "nik", "kode_pendaftaran", 
+        "jalur", "nama_kluster", "nilai_temp", "status_wawancara", 
+        "pt_final", "prodi_final"
+      ],
+      order: [["nama_lengkap", "ASC"]],
+      raw: true
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Semua Data Penelaahan");
+
+    worksheet.columns = [
+      { header: "No", key: "no", width: 5 },
+      { header: "Nama Lengkap", key: "nama", width: 35 },
+      { header: "NIK", key: "nik", width: 25 },
+      { header: "Kode Pendaftaran", key: "kode", width: 25 },
+      { header: "Jalur", key: "jalur", width: 20 },
+      { header: "Kluster", key: "kluster", width: 20 },
+      { header: "Nilai Akhir", key: "nilai_akhir", width: 15 },
+      { header: "Status Wawancara", key: "status_wawancara", width: 25 },
+      { header: "PT Final", key: "pt_final", width: 25 },
+      { header: "Prodi Final", key: "prodi_final", width: 25 },
+    ];
+
+    rows.forEach((row, index) => {
+      worksheet.addRow({
+        no: index + 1,
+        nama: row.nama_lengkap || "-",
+        nik: row.nik || "-",
+        kode: row.kode_pendaftaran || "-",
+        jalur: row.jalur || "-",
+        kluster: row.nama_kluster || "-",
+        nilai_akhir: row.nilai_temp || 0,
+        status_wawancara: row.status_wawancara || "-",
+        pt_final: row.pt_final || "-",
+        prodi_final: row.prodi_final || "-"
+      });
+    });
+
+    // Styling Header
+    for (let i = 1; i <= 10; i++) {
+      const cell = worksheet.getRow(1).getCell(i);
+      cell.font = { bold: true };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE0F0FF" } };
+    }
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", "attachment; filename=Semua_Data_Penelaahan.xlsx");
+
+    await workbook.xlsx.write(res);
+    res.status(200).end();
+  } catch (error) {
+    console.error("Error downloadExcelSemuaPenelaahan:", error);
+    return errorResponse(res, "Gagal mengunduh file Excel semua data");
   }
 };

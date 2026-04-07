@@ -1,6 +1,6 @@
 const { Op } = require("sequelize");
 const exceljs = require("exceljs");
-const { TrxBeasiswa, sequelize } = require("../../../models");
+const { TrxBeasiswa, TrxPilihanProgramStudi, sequelize } = require("../../../models");
 const { successResponse, errorResponse } = require("../../../common/response");
 
 const getWhereCondition = (tipe_laporan, jalur_text, search) => {
@@ -69,11 +69,51 @@ exports.exportLaporanExcel = async (req, res) => {
   try {
     const { search = "", tipe_laporan, id_jalur } = req.query;
     const where = getWhereCondition(tipe_laporan, id_jalur, search);
-    const data = await TrxBeasiswa.findAll({ where, order: [["id_trx_beasiswa", "DESC"]] });
+    
+    // 1. Ambil data pendaftar (Gunakan raw: true agar lebih ringan)
+    const data = await TrxBeasiswa.findAll({ 
+      where, 
+      order: [["id_trx_beasiswa", "DESC"]],
+      raw: true
+    });
 
+    // Kumpulkan semua id_trx_beasiswa untuk mengambil pilihan studinya sekaligus
+    const listIdTrx = data.map(p => p.id_trx_beasiswa);
+
+    // 2. Ambil seluruh data pilihan prodi untuk pendaftar yang difilter
+    let pilihanData = [];
+    if (listIdTrx.length > 0) {
+      pilihanData = await TrxPilihanProgramStudi.findAll({
+        where: { id_trx_beasiswa: { [Op.in]: listIdTrx } },
+        order: [["id_trx_beasiswa", "ASC"], ["id", "ASC"]], // Diurutkan agar Pilihan 1, 2, 3 sesuai urutan insert
+        raw: true
+      });
+    }
+
+    // 3. Kelompokkan pilihan per pendaftar dan cari panjang kolom maksimal (dinamis)
+    const mapPilihan = {};
+    let maxPilihanCount = 0; // Variabel untuk menyimpan jumlah pilihan terbanyak
+
+    pilihanData.forEach((row) => {
+      if (!mapPilihan[row.id_trx_beasiswa]) {
+        mapPilihan[row.id_trx_beasiswa] = [];
+      }
+      mapPilihan[row.id_trx_beasiswa].push(row);
+      
+      // Update maxPilihanCount jika user ini punya pilihan lebih banyak
+      if (mapPilihan[row.id_trx_beasiswa].length > maxPilihanCount) {
+        maxPilihanCount = mapPilihan[row.id_trx_beasiswa].length;
+      }
+    });
+
+    // Minimal sediakan 1 kolom pilihan meskipun data kosong agar format tabel tetap rapi
+    if (maxPilihanCount === 0) maxPilihanCount = 1;
+
+    // 4. Siapkan Excel
     const workbook = new exceljs.Workbook();
     const worksheet = workbook.addWorksheet("Rekap Pendaftar");
 
+    // Kolom Statis Awal
     const columns = [
       { header: "No.", key: "no", width: 5 },
       { header: "Kode Pendaftar", key: "kode_pendaftaran", width: 20 },
@@ -120,12 +160,19 @@ exports.exportLaporanExcel = async (req, res) => {
       { header: "Buta Warna", key: "kondisi_buta_warna", width: 12 },
     ];
 
-    for (let i = 1; i <= 45; i++) { columns.push({ header: `Pilihan ${i}`, key: `pilihan_${i}`, width: 12 }); }
+    // 5. Generate Kolom Pilihan Secara Dinamis 
+    for (let i = 1; i <= maxPilihanCount; i++) { 
+      // Lebar kolom di-set ke 35 karena formatnya "Nama PT - Nama Prodi" akan cukup panjang
+      columns.push({ header: `Pilihan ${i}`, key: `pilihan_${i}`, width: 35 }); 
+    }
+
+    // Kolom Statis Akhir
     columns.push({ header: "Nama Selektor", key: "verifikator_nama", width: 20 });
 
     worksheet.columns = columns;
     worksheet.getRow(1).font = { bold: true };
 
+    // 6. Masukkan data ke baris Excel
     data.forEach((p, index) => {
       const rowData = {
         no: index + 1,
@@ -173,7 +220,22 @@ exports.exportLaporanExcel = async (req, res) => {
         kondisi_buta_warna: p.kondisi_buta_warna === "Y" ? "Ya" : "Tidak",
         verifikator_nama: p.verifikator_nama || "-",
       };
-      for (let i = 1; i <= 45; i++) rowData[`pilihan_${i}`] = "-";
+
+      // 7. Ambil daftar pilihan untuk user ini
+      const pilihanUser = mapPilihan[p.id_trx_beasiswa] || [];
+
+      // Isi kolom pilihan secara dinamis (Format: "Nama PT - Nama Prodi")
+      for (let i = 1; i <= maxPilihanCount; i++) {
+        // Karena array index dimulai dari 0, kurangi i dengan 1
+        const pilihanDetail = pilihanUser[i - 1]; 
+        
+        if (pilihanDetail) {
+          rowData[`pilihan_${i}`] = `${pilihanDetail.nama_pt || "-"} - ${pilihanDetail.nama_prodi || "-"}`;
+        } else {
+          rowData[`pilihan_${i}`] = "-"; // Kosongkan jika user ini tidak punya pilihan ke-i
+        }
+      }
+
       worksheet.addRow(rowData);
     });
 
@@ -181,5 +243,8 @@ exports.exportLaporanExcel = async (req, res) => {
     res.setHeader("Content-Disposition", `attachment; filename=Rekap_Pendaftar.xlsx`);
     await workbook.xlsx.write(res);
     res.end();
-  } catch (error) { return errorResponse(res, "Gagal export file"); }
+  } catch (error) { 
+    console.error("Error Export Excel:", error);
+    return errorResponse(res, "Gagal export file"); 
+  }
 };

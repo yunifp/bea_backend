@@ -1,9 +1,11 @@
 const { Op } = require("sequelize");
-const { TrxBeasiswa } = require("../../../models");
+const { TrxBeasiswa } = require("../../../models"); // DB Beasiswa
+const RefProgramStudi = require("../../../models/RefProgramStudi"); // DB Master (Koneksi Berbeda)
+const RefPerguruanTinggi = require("../../../models/RefPerguruanTinggi");
 const { successResponse, errorResponse } = require("../../../common/response");
 const ExcelJS = require("exceljs");
 
-// 1. Get Data Datatable (Flow 12 - Rekomtek)
+// 1. Get Data Datatable Pendaftar Rekomtek (Flow 12) + Ambil Kuota dari DB Master
 exports.getPendaftarRekomtek = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -28,15 +30,31 @@ exports.getPendaftarRekomtek = async (req, res) => {
         "id_trx_beasiswa", "nama_lengkap", "nik", "kode_pendaftaran", 
         "jalur", "nama_kluster", "nilai_temp", "pt_final", "prodi_final", 
         "urutan_ranking", "file_rekomendasi_teknis",
-        "status_undur_diri" // 👈 Tambahkan ini agar Frontend tahu statusnya
+        "status_undur_diri", 
+        "jenjang_sekolah" // <--- DITAMBAHKAN DISINI
       ],
       limit,
       offset,
       order: [["urutan_ranking", "ASC"]],
     });
 
+    // --- LOGIKA AMBIL KUOTA LINTAS DB ---
+    const resultsWithKuota = await Promise.all(rows.map(async (row) => {
+      const plainRow = row.get({ plain: true });
+      
+      const prodiMaster = await RefProgramStudi.findOne({
+        where: { nama_prodi: plainRow.prodi_final },
+        attributes: ['kuota']
+      });
+
+      return {
+        ...plainRow,
+        sisa_kuota: prodiMaster ? prodiMaster.kuota : 0
+      };
+    }));
+
     return successResponse(res, "Data rekomtek berhasil dimuat", {
-      result: rows,
+      result: resultsWithKuota,
       total: count,
       current_page: page,
       total_pages: Math.ceil(count / limit),
@@ -46,34 +64,87 @@ exports.getPendaftarRekomtek = async (req, res) => {
     return errorResponse(res, "Internal Server Error");
   }
 };
-
+// 2. Proses Mengundurkan Diri (KUOTA BERTAMBAH / SLOT KOSONG JADI ADA LAGI)
 exports.prosesMengundurkanDiri = async (req, res) => {
   try {
-    const { id } = req.params; // ini adalah id_trx_beasiswa
+    const { id } = req.params; 
 
-    // Cari data pendaftar
     const pendaftar = await TrxBeasiswa.findByPk(id);
-    
-    if (!pendaftar) {
-      return errorResponse(res, "Data pendaftar tidak ditemukan", 404);
-    }
+    if (!pendaftar) return errorResponse(res, "Data pendaftar tidak ditemukan", 404);
+    if (pendaftar.status_undur_diri === "Y") return errorResponse(res, "Siswa ini sudah berstatus mengundurkan diri", 400);
 
-    // Cek jika sudah mengundurkan diri sebelumnya
-    if (pendaftar.status_undur_diri === "Y") {
-      return errorResponse(res, "Siswa ini sudah berstatus mengundurkan diri", 400);
-    }
+    const namaPT = pendaftar.pt_final ? pendaftar.pt_final.trim() : "";
+    const namaProdi = pendaftar.prodi_final ? pendaftar.prodi_final.trim() : "";
 
-    // Update status menjadi Y
+    // Cari PT & Prodi di Master
+    const ptMaster = await RefPerguruanTinggi.findOne({ where: { nama_pt: { [Op.like]: `%${namaPT}%` } } });
+    if (!ptMaster) return errorResponse(res, `Kampus "${namaPT}" tidak ditemukan di master.`, 404);
+
+    const prodi = await RefProgramStudi.findOne({
+      where: { id_pt: ptMaster.id_pt, nama_prodi: { [Op.like]: `%${namaProdi}%` } }
+    });
+
+    if (!prodi) return errorResponse(res, `Prodi "${namaProdi}" tidak ditemukan di master.`, 404);
+
+    // A. Update status di DB Beasiswa
     await pendaftar.update({ status_undur_diri: "Y" });
 
-    return successResponse(res, `Siswa a.n ${pendaftar.nama_lengkap} berhasil diset mengundurkan diri.`);
+    // B. Update Kuota di Master (+1 karena slot jadi kosong kembali)
+    await RefProgramStudi.update(
+      { kuota: prodi.kuota + 1 }, 
+      { where: { id_prodi: prodi.id_prodi } }
+    );
+
+    return successResponse(res, `Siswa berhasil mundur. Jatah slot kuota prodi telah dikembalikan (Bertambah).`);
   } catch (error) {
     console.error("Error prosesMengundurkanDiri:", error);
     return errorResponse(res, "Internal Server Error");
   }
 };
 
-// 2. Download Data Excel (Format Khusus Rekomtek)
+// 3. Batal Mengundurkan Diri (KUOTA BERKURANG / SLOT TERISI LAGI)
+exports.batalMengundurkanDiri = async (req, res) => {
+  try {
+    const { id } = req.params; 
+
+    const pendaftar = await TrxBeasiswa.findByPk(id);
+    if (!pendaftar) return errorResponse(res, "Data pendaftar tidak ditemukan", 404);
+    if (pendaftar.status_undur_diri !== "Y") return errorResponse(res, "Siswa ini memang tidak dalam status mundur.", 400);
+    
+    const namaPT = pendaftar.pt_final ? pendaftar.pt_final.trim() : "";
+    const namaProdi = pendaftar.prodi_final ? pendaftar.prodi_final.trim() : "";
+
+    // Cari PT & Prodi di Master
+    const ptMaster = await RefPerguruanTinggi.findOne({ where: { nama_pt: { [Op.like]: `%${namaPT}%` } } });
+    if (!ptMaster) return errorResponse(res, `Kampus tidak ditemukan di master.`, 404);
+
+    const prodi = await RefProgramStudi.findOne({
+      where: { id_pt: ptMaster.id_pt, nama_prodi: { [Op.like]: `%${namaProdi}%` } }
+    });
+
+    if (!prodi) return errorResponse(res, `Prodi tidak ditemukan di master.`, 404);
+
+    // Cek apakah slot masih tersedia sebelum dikurangi
+    if (prodi.kuota <= 0) {
+      return errorResponse(res, `Gagal batal! Slot kuota prodi ini sudah penuh/habis (0).`, 400);
+    }
+
+    // A. Update status di DB Beasiswa
+    await pendaftar.update({ status_undur_diri: "N" });
+
+    // B. Update Kuota di Master (-1 karena slot diisi lagi oleh siswa ini)
+    await RefProgramStudi.update(
+      { kuota: prodi.kuota - 1 },
+      { where: { id_prodi: prodi.id_prodi } }
+    );
+
+    return successResponse(res, `Berhasil membatalkan undur diri. Slot kuota telah terisi kembali (Berkurang).`);
+  } catch (error) {
+    console.error("Error batalMengundurkanDiri:", error);
+    return errorResponse(res, "Internal Server Error");
+  }
+};
+// 4. Download Data Excel (Format Khusus Rekomtek)
 exports.downloadDataRekomtek = async (req, res) => {
   try {
     const rows = await TrxBeasiswa.findAll({
@@ -85,7 +156,6 @@ exports.downloadDataRekomtek = async (req, res) => {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Data Rekomtek");
 
-    // 👇 Tambahkan kolom KODE PENDAFTARAN di sini
     worksheet.columns = [
       { header: "NO", key: "no", width: 6 },
       { header: "KODE PENDAFTARAN", key: "kode_pendaftaran", width: 25 },
@@ -94,6 +164,7 @@ exports.downloadDataRekomtek = async (req, res) => {
       { header: "NAMA IBU KANDUNG", key: "ibu_nama", width: 30 },
       { header: "TEMPAT LAHIR", key: "tempat_lahir", width: 20 },
       { header: "TANGGAL LAHIR", key: "tanggal_lahir", width: 15 },
+      { header: "JENJANG PENDIDIKAN", key: "jenjang_sekolah", width: 25 }, // <--- DITAMBAHKAN DISINI
       { header: "ASAL SEKOLAH", key: "sekolah", width: 30 },
       { header: "JURUSAN SEKOLAH", key: "jurusan", width: 25 },
       { header: "TANGGAL LULUS SEKOLAH", key: "tahun_lulus", width: 25 },
@@ -107,7 +178,6 @@ exports.downloadDataRekomtek = async (req, res) => {
     ];
 
     rows.forEach((row, index) => {
-      // Format tanggal lahir agar rapi
       let tglLahir = row.tanggal_lahir;
       if (tglLahir instanceof Date) {
         tglLahir = tglLahir.toISOString().split('T')[0];
@@ -115,12 +185,13 @@ exports.downloadDataRekomtek = async (req, res) => {
 
       worksheet.addRow({
         no: index + 1,
-        kode_pendaftaran: row.kode_pendaftaran || "-", // 👇 Map data dari database ke Excel
+        kode_pendaftaran: row.kode_pendaftaran || "-",
         nama: row.nama_lengkap || "-",
         nik: row.nik || "-",
         ibu_nama: row.ibu_nama || "-",
         tempat_lahir: row.tempat_lahir || "-",
         tanggal_lahir: tglLahir || "-",
+        jenjang_sekolah: row.jenjang_sekolah || "-", // <--- DITAMBAHKAN DISINI
         sekolah: row.sekolah || "-",
         jurusan: row.jurusan || "-",
         tahun_lulus: row.tahun_lulus || "-",
@@ -134,18 +205,14 @@ exports.downloadDataRekomtek = async (req, res) => {
       });
     });
 
-    // Styling Header: Bold, Text Center, Background Biru Muda
     worksheet.getRow(1).eachCell((cell) => {
       cell.font = { bold: true };
       cell.alignment = { horizontal: 'center', vertical: 'middle' };
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFD9E1F2" } }; 
       
-      // Tambahkan border di setiap header
       cell.border = {
-        top: {style:'thin'},
-        left: {style:'thin'},
-        bottom: {style:'thin'},
-        right: {style:'thin'}
+        top: {style:'thin'}, left: {style:'thin'},
+        bottom: {style:'thin'}, right: {style:'thin'}
       };
     });
 
@@ -160,15 +227,13 @@ exports.downloadDataRekomtek = async (req, res) => {
   }
 };
 
-// 3. Upload Dokumen Rekomtek
+// 5. Upload Dokumen Rekomtek
 exports.uploadDokumenRekomtek = async (req, res) => {
   try {
     if (!req.file) return errorResponse(res, "File dokumen tidak ditemukan");
     
-    // Asumsi file tersimpan dan kita mendapatkan filename-nya
     const filename = req.file.filename;
 
-    // Update nama file ke SEMUA pendaftar yang ada di flow 12
     const [updatedCount] = await TrxBeasiswa.update(
       { file_rekomendasi_teknis: filename },
       { where: { id_flow: 12 } }
@@ -181,10 +246,9 @@ exports.uploadDokumenRekomtek = async (req, res) => {
   }
 };
 
-// 4. Cek Dokumen Terupload
+// 6. Cek Dokumen Terupload
 exports.cekDokumenRekomtek = async (req, res) => {
   try {
-    // Ambil 1 sampel saja dari flow 12 yang file-nya tidak kosong
     const data = await TrxBeasiswa.findOne({
       where: { id_flow: 12, file_rekomendasi_teknis: { [Op.ne]: null } },
       attributes: ["file_rekomendasi_teknis"]
@@ -198,7 +262,7 @@ exports.cekDokumenRekomtek = async (req, res) => {
   }
 };
 
-// 5. Kirim Data ke Flow 14
+// 7. Kirim Data ke Flow 14 (Hanya yang TIDAK Mengundurkan Diri)
 exports.kirimKeFlow14 = async (req, res) => {
   try {
     const [updatedCount] = await TrxBeasiswa.update(
@@ -206,7 +270,6 @@ exports.kirimKeFlow14 = async (req, res) => {
       { 
         where: { 
           id_flow: 12,
-          // 👇 TAMBAHKAN KONDISI INI: Hanya pindahkan yang TIDAK mengundurkan diri
           status_undur_diri: {
             [Op.or]: ["N", null] 
           }
@@ -218,33 +281,49 @@ exports.kirimKeFlow14 = async (req, res) => {
       return errorResponse(res, "Tidak ada data yang bisa dikirim (Mungkin data kosong atau semua siswa mengundurkan diri).");
     }
 
-    return successResponse(res, `Berhasil mengirim ${updatedCount} pendaftar ke Tahap 14.`);
+    return successResponse(res, `Berhasil mengirim ${updatedCount} pendaftar ke Tahap Penetapan.`);
   } catch (error) {
     console.error("Error kirimKeFlow14:", error);
     return errorResponse(res, "Internal Server Error");
   }
 };
 
-exports.batalMengundurkanDiri = async (req, res) => {
+
+exports.getSummaryKuotaRekomtek = async (req, res) => {
   try {
-    const { id } = req.params; // id_trx_beasiswa
+    // 1. Ambil semua PT & Prodi unik yang ada di pendaftar Flow 12
+    const pendaftar = await TrxBeasiswa.findAll({
+      where: { id_flow: 12 },
+      attributes: ['pt_final', 'prodi_final'],
+      group: ['pt_final', 'prodi_final']
+    });
 
-    const pendaftar = await TrxBeasiswa.findByPk(id);
-    
-    if (!pendaftar) {
-      return errorResponse(res, "Data pendaftar tidak ditemukan", 404);
-    }
+    // 2. Ambil detail kuota dari DB Master untuk tiap PT & Prodi tersebut
+    const summary = await Promise.all(pendaftar.map(async (p) => {
+      const ptMaster = await RefPerguruanTinggi.findOne({
+        where: { nama_pt: { [Op.like]: `%${p.pt_final}%` } }
+      });
 
-    if (pendaftar.status_undur_diri !== "Y") {
-      return errorResponse(res, "Siswa ini tidak dalam status mengundurkan diri", 400);
-    }
+      let kuota = 0;
+      if (ptMaster) {
+        const prodiMaster = await RefProgramStudi.findOne({
+          where: { 
+            id_pt: ptMaster.id_pt, 
+            nama_prodi: { [Op.like]: `%${p.prodi_final}%` } 
+          }
+        });
+        kuota = prodiMaster ? prodiMaster.kuota : 0;
+      }
 
-    // Kembalikan status menjadi N
-    await pendaftar.update({ status_undur_diri: "N" });
+      return {
+        perguruan_tinggi: p.pt_final,
+        program_studi: p.prodi_final,
+        sisa_kuota: kuota
+      };
+    }));
 
-    return successResponse(res, `Status undur diri a.n ${pendaftar.nama_lengkap} berhasil dibatalkan.`);
+    return successResponse(res, "Summary kuota berhasil dimuat", summary);
   } catch (error) {
-    console.error("Error batalMengundurkanDiri:", error);
     return errorResponse(res, "Internal Server Error");
   }
 };

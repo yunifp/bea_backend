@@ -41,11 +41,13 @@ const {
   cekDokumenRekomtek,
   kirimKeFlow14,
   prosesMengundurkanDiri,
-  batalMengundurkanDiri
+  batalMengundurkanDiri,
+  getSummaryKuotaRekomtek
 } = require("../controller");
 
 router.get("/list", getPendaftarRekomtek);
 router.get("/download", downloadDataRekomtek);
+router.get("/summary-kuota", getSummaryKuotaRekomtek);
 router.get("/cek-dokumen", cekDokumenRekomtek);
 router.put("/kirim", kirimKeFlow14);
 router.put("/mengundurkan-diri/:id", prosesMengundurkanDiri);
