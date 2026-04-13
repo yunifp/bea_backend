@@ -18,7 +18,8 @@ const {
   TrxLogKeputusan,
   TrxNilaiRapor,
   RefProgramStudi,
-  sequelize
+  sequelize,
+  EmailLog
 } = require("../../../models");
 const { getFileUrl } = require("../../../common/middleware/upload_middleware");
 const ExcelJS = require("exceljs");
@@ -1235,6 +1236,7 @@ exports.submitBeasiswa = async (req, res) => {
       sekolah_kabkot,
       jenjang_sekolah,
       sekolah,
+      nisn_sekolah,
       jurusan,
       tahun_lulus,
       nama_jurusan_sekolah,
@@ -1406,6 +1408,7 @@ exports.submitBeasiswa = async (req, res) => {
       id_jenjang_sekolah: normalize(idJenjangSekolah),
       jenjang_sekolah: normalize(jenjangSekolah),
       sekolah: normalize(sekolah),
+      nisn_sekolah: normalize(nisn_sekolah),
       jurusan: normalize(jurusan),
       tahun_lulus: normalize(tahun_lulus),
       nama_jurusan_sekolah: normalize(nama_jurusan_sekolah),
@@ -1452,6 +1455,51 @@ exports.submitBeasiswa = async (req, res) => {
       } else if (currentFlow === 4) {
         updateData.id_flow = 5;
         updateData.flow = "Verifikasi Hasil Perbaikan";
+
+        // Set revised_at untuk section yang sebelumnya N
+        const existingSection = await TrxCatatanDataSection.findOne({
+          where: { id_trx_beasiswa: id_trx_beasiswa },
+        });
+
+        if (existingSection) {
+          const sectionUpdate = {};
+          const now = new Date();
+
+          if (existingSection.data_pribadi_is_valid === "N")
+            sectionUpdate.data_pribadi_revised_at = now;
+          if (existingSection.data_tempat_tinggal_bekerja_is_valid === "N")
+            sectionUpdate.data_tempat_tinggal_bekerja_revised_at = now;
+          if (existingSection.data_orang_tua_is_valid === "N")
+            sectionUpdate.data_orang_tua_revised_at = now;
+          if (existingSection.data_pendidikan_is_valid === "N")
+            sectionUpdate.data_pendidikan_revised_at = now;
+
+          if (Object.keys(sectionUpdate).length > 0) {
+            await TrxCatatanDataSection.update(sectionUpdate, {
+              where: { id_trx_beasiswa: id_trx_beasiswa },
+            });
+          }
+        }
+
+        // Set peserta_revised_at untuk dokumen yang status_verifikasi = "tidak sesuai"
+        await TrxDokumenUmum.update(
+          { peserta_revised_at: new Date() },
+          {
+            where: {
+              id_trx_beasiswa: id_trx_beasiswa,
+              status_verifikasi: "tidak sesuai",
+            },
+          }
+        );
+        await TrxDokumenKhusus.update(
+          { peserta_revised_at: new Date() },
+          {
+            where: {
+              id_trx_beasiswa: id_trx_beasiswa,
+              status_verifikasi: "tidak sesuai",
+            },
+          }
+        );
       } else if (currentFlow === 9) {
         updateData.id_flow = 10;
         updateData.flow = "Verifikasi Hasil Perbaikan";
@@ -1693,10 +1741,32 @@ exports.updateFlowBeasiswa = async (req, res) => {
             `,
           };
 
-          // Kirim secara asinkron agar tidak membuat aplikasi loading lama
-          transporter.sendMail(mailOptions).catch(err => {
-            console.error("Gagal mengirim email penolakan:", err);
-          });
+          // 1. Simpan log email "pending" ke database Beasiswa
+          let emailLog;
+          try {
+            emailLog = await EmailLog.create({
+              id_trx: idTrxBeasiswa,
+              email_to: pendaftar.email,
+              subject: mailOptions.subject,
+              body_html: mailOptions.html,
+              status: "pending"
+            });
+          } catch (logErr) {
+            console.error("Gagal menyimpan log email penolakan:", logErr.message);
+          }
+
+          // 2. Kirim secara asinkron (Background process)
+          transporter.sendMail(mailOptions)
+            .then(async () => {
+              // Jika sukses terkirim, ubah status log jadi "sent"
+              if (emailLog) await emailLog.update({ status: "sent" });
+              console.log(`Email penolakan berhasil dikirim ke ${pendaftar.email}`);
+            })
+            .catch(async (err) => {
+              // Jika gagal, ubah status log jadi "failed"
+              console.error("Gagal mengirim email penolakan:", err);
+              if (emailLog) await emailLog.update({ status: "failed" });
+            });
 
         } catch (err) {
           console.error("Error setting up email untuk penolakan:", err);
@@ -1780,6 +1850,25 @@ exports.updateFlowBeasiswa = async (req, res) => {
         await TrxCatatanDataSection.create(insertDataSection);
       }
     }
+
+    // await TrxCatatanDataSection.update(
+    //   {
+    //     data_pribadi_revised_at: null,
+    //     data_tempat_tinggal_bekerja_revised_at: null,
+    //     data_orang_tua_revised_at: null,
+    //     data_pendidikan_revised_at: null,
+    //   },
+    //   { where: { id_trx_beasiswa: idTrxBeasiswa } }
+    // );
+
+    // await TrxDokumenUmum.update(
+    //   { peserta_revised_at: null },
+    //   { where: { id_trx_beasiswa: idTrxBeasiswa } }
+    // );
+    // await TrxDokumenKhusus.update(
+    //   { peserta_revised_at: null },
+    //   { where: { id_trx_beasiswa: idTrxBeasiswa } }
+    // );
 
     // Data catatan persyaratan
     const semuaPersyaratan = [

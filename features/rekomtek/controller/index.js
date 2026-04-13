@@ -1,11 +1,31 @@
 const { Op } = require("sequelize");
-const { TrxBeasiswa } = require("../../../models"); // DB Beasiswa
-const RefProgramStudi = require("../../../models/RefProgramStudi"); // DB Master (Koneksi Berbeda)
+const { TrxBeasiswa } = require("../../../models");
+const RefProgramStudi = require("../../../models/RefProgramStudi");
 const RefPerguruanTinggi = require("../../../models/RefPerguruanTinggi");
 const { successResponse, errorResponse } = require("../../../common/response");
 const ExcelJS = require("exceljs");
+const jwt = require("jsonwebtoken");
 
-// 1. Get Data Datatable Pendaftar Rekomtek (Flow 12) + Ambil Kuota dari DB Master
+const getUserContext = (req) => {
+  const authHeader = req.headers["authorization"];
+  if (authHeader) {
+    const token = authHeader.split(" ")[1];
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      
+      const roles = Array.isArray(decoded.role) ? decoded.role : [decoded.role];
+      
+      return {
+        roles: roles,
+        lembaga_pendidikan: decoded.lembaga_pendidikan || null,
+      };
+    } catch (error) {
+      return null;
+    }
+  }
+  return null;
+};
+
 exports.getPendaftarRekomtek = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -14,6 +34,11 @@ exports.getPendaftarRekomtek = async (req, res) => {
     const offset = (page - 1) * limit;
 
     const whereCondition = { id_flow: 12 };
+    
+    const userCtx = getUserContext(req);
+    if (userCtx && userCtx.roles.includes(111) && userCtx.lembaga_pendidikan) {
+      whereCondition.pt_final = { [Op.like]: `%${userCtx.lembaga_pendidikan}%` };
+    }
 
     if (search) {
       whereCondition[Op.or] = [
@@ -31,14 +56,13 @@ exports.getPendaftarRekomtek = async (req, res) => {
         "jalur", "nama_kluster", "nilai_temp", "pt_final", "prodi_final", 
         "urutan_ranking", "file_rekomendasi_teknis",
         "status_undur_diri", 
-        "jenjang_sekolah" // <--- DITAMBAHKAN DISINI
+        "jenjang_sekolah"
       ],
       limit,
       offset,
       order: [["urutan_ranking", "ASC"]],
     });
 
-    // --- LOGIKA AMBIL KUOTA LINTAS DB ---
     const resultsWithKuota = await Promise.all(rows.map(async (row) => {
       const plainRow = row.get({ plain: true });
       
@@ -60,11 +84,10 @@ exports.getPendaftarRekomtek = async (req, res) => {
       total_pages: Math.ceil(count / limit),
     });
   } catch (error) {
-    console.error("Error getPendaftarRekomtek:", error);
-    return errorResponse(res, "Internal Server Error");
+    return errorResponse(res, "Internal Server Error", 500);
   }
 };
-// 2. Proses Mengundurkan Diri (KUOTA BERTAMBAH / SLOT KOSONG JADI ADA LAGI)
+
 exports.prosesMengundurkanDiri = async (req, res) => {
   try {
     const { id } = req.params; 
@@ -76,7 +99,6 @@ exports.prosesMengundurkanDiri = async (req, res) => {
     const namaPT = pendaftar.pt_final ? pendaftar.pt_final.trim() : "";
     const namaProdi = pendaftar.prodi_final ? pendaftar.prodi_final.trim() : "";
 
-    // Cari PT & Prodi di Master
     const ptMaster = await RefPerguruanTinggi.findOne({ where: { nama_pt: { [Op.like]: `%${namaPT}%` } } });
     if (!ptMaster) return errorResponse(res, `Kampus "${namaPT}" tidak ditemukan di master.`, 404);
 
@@ -86,10 +108,8 @@ exports.prosesMengundurkanDiri = async (req, res) => {
 
     if (!prodi) return errorResponse(res, `Prodi "${namaProdi}" tidak ditemukan di master.`, 404);
 
-    // A. Update status di DB Beasiswa
     await pendaftar.update({ status_undur_diri: "Y" });
 
-    // B. Update Kuota di Master (+1 karena slot jadi kosong kembali)
     await RefProgramStudi.update(
       { kuota: prodi.kuota + 1 }, 
       { where: { id_prodi: prodi.id_prodi } }
@@ -97,12 +117,10 @@ exports.prosesMengundurkanDiri = async (req, res) => {
 
     return successResponse(res, `Siswa berhasil mundur. Jatah slot kuota prodi telah dikembalikan (Bertambah).`);
   } catch (error) {
-    console.error("Error prosesMengundurkanDiri:", error);
-    return errorResponse(res, "Internal Server Error");
+    return errorResponse(res, "Internal Server Error", 500);
   }
 };
 
-// 3. Batal Mengundurkan Diri (KUOTA BERKURANG / SLOT TERISI LAGI)
 exports.batalMengundurkanDiri = async (req, res) => {
   try {
     const { id } = req.params; 
@@ -114,7 +132,6 @@ exports.batalMengundurkanDiri = async (req, res) => {
     const namaPT = pendaftar.pt_final ? pendaftar.pt_final.trim() : "";
     const namaProdi = pendaftar.prodi_final ? pendaftar.prodi_final.trim() : "";
 
-    // Cari PT & Prodi di Master
     const ptMaster = await RefPerguruanTinggi.findOne({ where: { nama_pt: { [Op.like]: `%${namaPT}%` } } });
     if (!ptMaster) return errorResponse(res, `Kampus tidak ditemukan di master.`, 404);
 
@@ -124,15 +141,12 @@ exports.batalMengundurkanDiri = async (req, res) => {
 
     if (!prodi) return errorResponse(res, `Prodi tidak ditemukan di master.`, 404);
 
-    // Cek apakah slot masih tersedia sebelum dikurangi
     if (prodi.kuota <= 0) {
       return errorResponse(res, `Gagal batal! Slot kuota prodi ini sudah penuh/habis (0).`, 400);
     }
 
-    // A. Update status di DB Beasiswa
     await pendaftar.update({ status_undur_diri: "N" });
 
-    // B. Update Kuota di Master (-1 karena slot diisi lagi oleh siswa ini)
     await RefProgramStudi.update(
       { kuota: prodi.kuota - 1 },
       { where: { id_prodi: prodi.id_prodi } }
@@ -140,15 +154,21 @@ exports.batalMengundurkanDiri = async (req, res) => {
 
     return successResponse(res, `Berhasil membatalkan undur diri. Slot kuota telah terisi kembali (Berkurang).`);
   } catch (error) {
-    console.error("Error batalMengundurkanDiri:", error);
-    return errorResponse(res, "Internal Server Error");
+    return errorResponse(res, "Internal Server Error", 500);
   }
 };
-// 4. Download Data Excel (Format Khusus Rekomtek)
+
 exports.downloadDataRekomtek = async (req, res) => {
   try {
+    const whereCondition = { id_flow: 12 };
+    
+    const userCtx = getUserContext(req);
+    if (userCtx && userCtx.roles.includes(111) && userCtx.lembaga_pendidikan) {
+      whereCondition.pt_final = { [Op.like]: `%${userCtx.lembaga_pendidikan}%` };
+    }
+
     const rows = await TrxBeasiswa.findAll({
-      where: { id_flow: 12 },
+      where: whereCondition,
       order: [["urutan_ranking", "ASC"]],
       raw: true
     });
@@ -164,7 +184,7 @@ exports.downloadDataRekomtek = async (req, res) => {
       { header: "NAMA IBU KANDUNG", key: "ibu_nama", width: 30 },
       { header: "TEMPAT LAHIR", key: "tempat_lahir", width: 20 },
       { header: "TANGGAL LAHIR", key: "tanggal_lahir", width: 15 },
-      { header: "JENJANG PENDIDIKAN", key: "jenjang_sekolah", width: 25 }, // <--- DITAMBAHKAN DISINI
+      { header: "JENJANG PENDIDIKAN", key: "jenjang_sekolah", width: 25 }, 
       { header: "ASAL SEKOLAH", key: "sekolah", width: 30 },
       { header: "JURUSAN SEKOLAH", key: "jurusan", width: 25 },
       { header: "TANGGAL LULUS SEKOLAH", key: "tahun_lulus", width: 25 },
@@ -191,7 +211,7 @@ exports.downloadDataRekomtek = async (req, res) => {
         ibu_nama: row.ibu_nama || "-",
         tempat_lahir: row.tempat_lahir || "-",
         tanggal_lahir: tglLahir || "-",
-        jenjang_sekolah: row.jenjang_sekolah || "-", // <--- DITAMBAHKAN DISINI
+        jenjang_sekolah: row.jenjang_sekolah || "-",
         sekolah: row.sekolah || "-",
         jurusan: row.jurusan || "-",
         tahun_lulus: row.tahun_lulus || "-",
@@ -222,35 +242,45 @@ exports.downloadDataRekomtek = async (req, res) => {
     await workbook.xlsx.write(res);
     res.status(200).end();
   } catch (error) {
-    console.error("Error downloadDataRekomtek:", error);
-    return errorResponse(res, "Gagal mengunduh file Excel");
+    return errorResponse(res, "Gagal mengunduh file Excel", 500);
   }
 };
 
-// 5. Upload Dokumen Rekomtek
 exports.uploadDokumenRekomtek = async (req, res) => {
   try {
-    if (!req.file) return errorResponse(res, "File dokumen tidak ditemukan");
+    if (!req.file) return errorResponse(res, "File dokumen tidak ditemukan", 400);
     
     const filename = req.file.filename;
 
+    const whereCondition = { id_flow: 12 };
+    
+    const userCtx = getUserContext(req);
+    if (userCtx && userCtx.roles.includes(111) && userCtx.lembaga_pendidikan) {
+      whereCondition.pt_final = { [Op.like]: `%${userCtx.lembaga_pendidikan}%` };
+    }
+
     const [updatedCount] = await TrxBeasiswa.update(
       { file_rekomendasi_teknis: filename },
-      { where: { id_flow: 12 } }
+      { where: whereCondition }
     );
 
     return successResponse(res, `Dokumen berhasil diunggah dan ditautkan ke ${updatedCount} pendaftar.`);
   } catch (error) {
-    console.error("Error uploadDokumenRekomtek:", error);
-    return errorResponse(res, "Gagal mengunggah dokumen");
+    return errorResponse(res, "Gagal mengunggah dokumen", 500);
   }
 };
 
-// 6. Cek Dokumen Terupload
 exports.cekDokumenRekomtek = async (req, res) => {
   try {
+    const whereCondition = { id_flow: 12, file_rekomendasi_teknis: { [Op.ne]: null } };
+    
+    const userCtx = getUserContext(req);
+    if (userCtx && userCtx.roles.includes(111) && userCtx.lembaga_pendidikan) {
+      whereCondition.pt_final = { [Op.like]: `%${userCtx.lembaga_pendidikan}%` };
+    }
+
     const data = await TrxBeasiswa.findOne({
-      where: { id_flow: 12, file_rekomendasi_teknis: { [Op.ne]: null } },
+      where: whereCondition,
       attributes: ["file_rekomendasi_teknis"]
     });
     
@@ -258,47 +288,54 @@ exports.cekDokumenRekomtek = async (req, res) => {
       filename: data ? data.file_rekomendasi_teknis : null 
     });
   } catch (error) {
-    return errorResponse(res, "Gagal mengecek dokumen");
+    return errorResponse(res, "Gagal mengecek dokumen", 500);
   }
 };
 
-// 7. Kirim Data ke Flow 14 (Hanya yang TIDAK Mengundurkan Diri)
 exports.kirimKeFlow14 = async (req, res) => {
   try {
+    const whereCondition = { 
+      id_flow: 12,
+      status_undur_diri: {
+        [Op.or]: ["N", null] 
+      }
+    };
+    
+    const userCtx = getUserContext(req);
+    if (userCtx && userCtx.roles.includes(111) && userCtx.lembaga_pendidikan) {
+      whereCondition.pt_final = { [Op.like]: `%${userCtx.lembaga_pendidikan}%` };
+    }
+
     const [updatedCount] = await TrxBeasiswa.update(
       { id_flow: 14 },
-      { 
-        where: { 
-          id_flow: 12,
-          status_undur_diri: {
-            [Op.or]: ["N", null] 
-          }
-        } 
-      }
+      { where: whereCondition }
     );
 
     if (updatedCount === 0) {
-      return errorResponse(res, "Tidak ada data yang bisa dikirim (Mungkin data kosong atau semua siswa mengundurkan diri).");
+      return errorResponse(res, "Tidak ada data yang bisa dikirim.", 400);
     }
 
     return successResponse(res, `Berhasil mengirim ${updatedCount} pendaftar ke Tahap Penetapan.`);
   } catch (error) {
-    console.error("Error kirimKeFlow14:", error);
-    return errorResponse(res, "Internal Server Error");
+    return errorResponse(res, "Internal Server Error", 500);
   }
 };
 
-
 exports.getSummaryKuotaRekomtek = async (req, res) => {
   try {
-    // 1. Ambil semua PT & Prodi unik yang ada di pendaftar Flow 12
+    const whereCondition = { id_flow: 12 };
+    
+    const userCtx = getUserContext(req);
+    if (userCtx && userCtx.roles.includes(111) && userCtx.lembaga_pendidikan) {
+      whereCondition.pt_final = { [Op.like]: `%${userCtx.lembaga_pendidikan}%` };
+    }
+
     const pendaftar = await TrxBeasiswa.findAll({
-      where: { id_flow: 12 },
+      where: whereCondition,
       attributes: ['pt_final', 'prodi_final'],
       group: ['pt_final', 'prodi_final']
     });
 
-    // 2. Ambil detail kuota dari DB Master untuk tiap PT & Prodi tersebut
     const summary = await Promise.all(pendaftar.map(async (p) => {
       const ptMaster = await RefPerguruanTinggi.findOne({
         where: { nama_pt: { [Op.like]: `%${p.pt_final}%` } }
@@ -324,6 +361,6 @@ exports.getSummaryKuotaRekomtek = async (req, res) => {
 
     return successResponse(res, "Summary kuota berhasil dimuat", summary);
   } catch (error) {
-    return errorResponse(res, "Internal Server Error");
+    return errorResponse(res, "Internal Server Error", 500);
   }
 };

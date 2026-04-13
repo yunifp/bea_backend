@@ -1,8 +1,8 @@
 const { DataTypes } = require("sequelize");
 const { sequelize } = require("../core/db_config");
 
-const TrxTracerStudi = sequelize.define(
-  "TrxTracerStudi",
+const TrxLog = sequelize.define(
+  "TrxLog",
   {
     id: {
       type: DataTypes.INTEGER(10),
@@ -10,23 +10,31 @@ const TrxTracerStudi = sequelize.define(
       autoIncrement: true,
       allowNull: false,
     },
-    id_trx_mahasiswa: {
+    id_flow: {
       type: DataTypes.INTEGER(10),
       allowNull: true,
     },
-    jalur_karir: {
+    flow: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    users: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    catatan: {
       type: DataTypes.STRING(255),
       allowNull: true,
     },
-    kontribusi_lulusan: {
-      type: DataTypes.STRING(255),
+    timestamp: {
+      type: DataTypes.DATE,
       allowNull: true,
     },
   },
   {
-    tableName: "trx_tracer_studi",
+    tableName: "trx_log",
     timestamps: false,
-  },
+  }
 );
 
-module.exports = TrxTracerStudi;
+module.exports = TrxLog;

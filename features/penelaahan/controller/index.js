@@ -1,5 +1,4 @@
 const { Op } = require("sequelize");
-// PASTIKAN IMPORT sequelize UNTUK RAW QUERY
 const { TrxBeasiswa, sequelize } = require("../../../models"); 
 const { successResponse, errorResponse } = require("../../../common/response");
 const ExcelJS = require("exceljs");
@@ -28,7 +27,7 @@ exports.getPendaftarPenelaahan = async (req, res) => {
       where: whereCondition,
       attributes: [
         "id_trx_beasiswa", "nama_lengkap", "nik", "kode_pendaftaran", 
-        "jalur", "nama_kluster", "nilai_temp", "status_wawancara" // <-- DITAMBAHKAN DI SINI
+        "jalur", "nama_kluster", "status_wawancara" // nilai_temp dihapus
       ],
       limit,
       offset,
@@ -54,7 +53,8 @@ exports.downloadExcelPenelaahan = async (req, res) => {
   try {
     const rows = await TrxBeasiswa.findAll({
       where: { id_flow: 11 },
-      attributes: ["id_trx_beasiswa", "nama_lengkap", "nama_kluster", "nilai_temp", "status_wawancara"], // <-- DITAMBAHKAN DI SINI
+      // Hanya mengambil 4 data ini dari database
+      attributes: ["kode_pendaftaran","nama_lengkap", "nama_kluster", "status_wawancara"], 
       order: [["nama_lengkap", "ASC"]],
       raw: true
     });
@@ -62,26 +62,25 @@ exports.downloadExcelPenelaahan = async (req, res) => {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Data Penelaahan");
 
+    // Header diset HANYA 4 kolom sesuai permintaan
     worksheet.columns = [
-      { header: "id_trx", key: "id_trx", width: 15 },
-      { header: "nama", key: "nama", width: 35 },
-      { header: "nilai_akhir", key: "nilai_akhir", width: 15 },
-      { header: "kluster", key: "kluster", width: 20 },
-      { header: "status_wawancara", key: "status_wawancara", width: 25 }, // <-- KOLOM EXCEL DITAMBAHKAN
+      { header: "Kode Pendaftaran", key: "kode_pendaftaran", width: 30 },
+      { header: "Nama Lengkap", key: "nama", width: 35 },
+      { header: "Kluster", key: "kluster", width: 20 },
+      { header: "Status Wawancara", key: "status_wawancara", width: 25 },
     ];
 
     rows.forEach((row) => {
       worksheet.addRow({
-        id_trx: row.id_trx_beasiswa,
         nama: row.nama_lengkap || "-",
-        nilai_akhir: row.nilai_temp || 0, 
+        kode_pendaftaran: row.kode_pendaftaran || "-",
         kluster: row.nama_kluster || "-",
-        status_wawancara: row.status_wawancara || "-", // <-- ISI BARIS DITAMBAHKAN
+        status_wawancara: row.status_wawancara || "-",
       });
     });
 
-    // Ubah loop styling menjadi sampai kolom ke-5 (sebelumnya 4)
-    for (let i = 1; i <= 5; i++) {
+    // Styling Header (Hanya untuk 4 kolom)
+    for (let i = 1; i <= 4; i++) {
       const cell = worksheet.getRow(1).getCell(i);
       cell.font = { bold: true };
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE0F0FF" } };
@@ -97,7 +96,9 @@ exports.downloadExcelPenelaahan = async (req, res) => {
     return errorResponse(res, "Gagal mengunduh file Excel");
   }
 };
-
+// ==========================================
+// 3. Upload Hasil Perankingan
+// ==========================================
 exports.uploadHasilPerankingan = async (req, res) => {
   try {
     if (!req.file) return errorResponse(res, "File Excel tidak ditemukan");
@@ -122,32 +123,34 @@ exports.uploadHasilPerankingan = async (req, res) => {
       return val.toString().trim();
     };
 
-    let idCol = 2, ptCol = 6, prodiCol = 7;
+    // Deteksi letak kolom dinamis
+    let kodeCol = 1, ptCol = 5, prodiCol = 6;
     worksheet.getRow(1).eachCell((cell, colNumber) => {
       const txt = extractVal(cell)?.toLowerCase() || "";
-      if (txt.includes("id")) idCol = colNumber;
+      if (txt.includes("kode") || txt.includes("pendaftaran")) kodeCol = colNumber;
       if (txt.includes("pt")) ptCol = colNumber;
       if (txt.includes("prodi")) prodiCol = colNumber;
     });
 
     for (let i = 2; i <= worksheet.rowCount; i++) {
       const row = worksheet.getRow(i);
-      const idTrx = extractVal(row.getCell(idCol));
+      const kodePendaftaran = extractVal(row.getCell(kodeCol)); // Membaca kode pendaftaran
       const ptFinal = extractVal(row.getCell(ptCol));
       const prodiFinal = extractVal(row.getCell(prodiCol));
       const urutan_excel = i - 1; 
 
-      if (!idTrx) continue;
+      if (!kodePendaftaran) continue;
 
       try {
+        // Query disesuaikan menjadi WHERE kode_pendaftaran
         await sequelize.query(
-          `UPDATE trx_beasiswa SET pt_final = :pt, prodi_final = :prodi, urutan_ranking = :urutan WHERE id_trx_beasiswa = :id AND id_flow = 11`,
+          `UPDATE trx_beasiswa SET pt_final = :pt, prodi_final = :prodi, urutan_ranking = :urutan WHERE kode_pendaftaran = :kode AND id_flow = 11`,
           {
             replacements: { 
               pt: ptFinal || null, 
               prodi: prodiFinal || null, 
               urutan: urutan_excel, 
-              id: idTrx 
+              kode: kodePendaftaran 
             },
             type: sequelize.QueryTypes.UPDATE
           }
@@ -175,7 +178,6 @@ exports.getHasilPerankingan = async (req, res) => {
     const search = req.query.search || "";
     const offset = (page - 1) * limit;
 
-    // Filter MURNI hanya yang pt_final-nya ada (Sudah di-upload)
     const whereCondition = {
       id_flow: 11,
       pt_final: {
@@ -197,10 +199,10 @@ exports.getHasilPerankingan = async (req, res) => {
 
     const { count, rows } = await TrxBeasiswa.findAndCountAll({
       where: whereCondition,
-      attributes: ["id_trx_beasiswa", "nama_lengkap", "nama_kluster", "nilai_temp", "pt_final", "prodi_final", "urutan_ranking"],
+      // nilai_temp dihapus, ditambahkan kode_pendaftaran dan status_wawancara agar datatable sinkron
+      attributes: ["id_trx_beasiswa", "kode_pendaftaran", "nama_lengkap", "nama_kluster", "status_wawancara", "pt_final", "prodi_final", "urutan_ranking"],
       limit,
       offset,
-      // URUTKAN MURNI BERDASARKAN URUTAN BARIS DI EXCEL YANG DIUPLOAD! Tidak meranking sendiri lagi.
       order: [["urutan_ranking", "ASC"]],
     });
 
@@ -216,17 +218,17 @@ exports.getHasilPerankingan = async (req, res) => {
   }
 };
 
-
+// ==========================================
+// 5. Kirim Data Penelaahan
+// ==========================================
 exports.kirimDataPenelaahan = async (req, res) => {
   try {
-    // Pindahkan pendaftar dari flow 11 ke 12 
-    // (Hanya yang sudah punya pt_final / berhasil di-upload dari excel perankingan)
     const [updatedCount] = await TrxBeasiswa.update(
       { id_flow: 12 },
       { 
         where: { 
           id_flow: 11,
-          pt_final: { [Op.ne]: null } // Syarat utama: PT Final tidak kosong
+          pt_final: { [Op.ne]: null }
         } 
       }
     );
@@ -242,7 +244,9 @@ exports.kirimDataPenelaahan = async (req, res) => {
   }
 };
 
-
+// ==========================================
+// 6. Reset Hasil
+// ==========================================
 exports.resetHasilPerankingan = async (req, res) => {
   try {
     const [updatedCount] = await TrxBeasiswa.update(
@@ -257,14 +261,16 @@ exports.resetHasilPerankingan = async (req, res) => {
   }
 };
 
-
+// ==========================================
+// 7. Download Semua
+// ==========================================
 exports.downloadExcelSemuaPenelaahan = async (req, res) => {
   try {
     const rows = await TrxBeasiswa.findAll({
       where: { id_flow: 11 },
       attributes: [
         "id_trx_beasiswa", "nama_lengkap", "nik", "kode_pendaftaran", 
-        "jalur", "nama_kluster", "nilai_temp", "status_wawancara", 
+        "jalur", "nama_kluster", "status_wawancara", // nilai_temp dihapus
         "pt_final", "prodi_final"
       ],
       order: [["nama_lengkap", "ASC"]],
@@ -281,7 +287,6 @@ exports.downloadExcelSemuaPenelaahan = async (req, res) => {
       { header: "Kode Pendaftaran", key: "kode", width: 25 },
       { header: "Jalur", key: "jalur", width: 20 },
       { header: "Kluster", key: "kluster", width: 20 },
-      { header: "Nilai Akhir", key: "nilai_akhir", width: 15 },
       { header: "Status Wawancara", key: "status_wawancara", width: 25 },
       { header: "PT Final", key: "pt_final", width: 25 },
       { header: "Prodi Final", key: "prodi_final", width: 25 },
@@ -295,15 +300,14 @@ exports.downloadExcelSemuaPenelaahan = async (req, res) => {
         kode: row.kode_pendaftaran || "-",
         jalur: row.jalur || "-",
         kluster: row.nama_kluster || "-",
-        nilai_akhir: row.nilai_temp || 0,
         status_wawancara: row.status_wawancara || "-",
         pt_final: row.pt_final || "-",
         prodi_final: row.prodi_final || "-"
       });
     });
 
-    // Styling Header
-    for (let i = 1; i <= 10; i++) {
+    // Styling Header (Berubah jadi batas 9 kolom karena nilai dihapus)
+    for (let i = 1; i <= 9; i++) {
       const cell = worksheet.getRow(1).getCell(i);
       cell.font = { bold: true };
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE0F0FF" } };

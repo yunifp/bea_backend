@@ -1,7 +1,10 @@
 const express = require("express");
 const router = express.Router();
-const { cekDataByNik } = require("../controller");
 
-router.get("/", cekDataByNik);
+// 1. Import dengan nama yang sama persis seperti di controller
+const { cekDataByKeyword } = require("../controller");
+
+// 2. Gunakan fungsi tersebut
+router.get("/", cekDataByKeyword);
 
 module.exports = router;

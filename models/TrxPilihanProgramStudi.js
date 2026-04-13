@@ -1,8 +1,8 @@
 const { DataTypes } = require("sequelize");
 const { sequelize } = require("../core/db_config");
 
-const TrxIpk = sequelize.define(
-  "TrxIpk",
+const TrxPilihanProgramStudi = sequelize.define(
+  "TrxPilihanProgramStudi",
   {
     id: {
       type: DataTypes.INTEGER(10),
@@ -10,23 +10,36 @@ const TrxIpk = sequelize.define(
       autoIncrement: true,
       allowNull: false,
     },
-    id_trx_mahasiswa: {
+
+    id_trx_beasiswa: {
       type: DataTypes.INTEGER(10),
       allowNull: true,
     },
-    semester: {
+
+    id_pt: {
       type: DataTypes.INTEGER(10),
       allowNull: true,
     },
-    nilai: {
+
+    nama_pt: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+
+    id_prodi: {
       type: DataTypes.INTEGER(10),
+      allowNull: true,
+    },
+
+    nama_prodi: {
+      type: DataTypes.STRING(255),
       allowNull: true,
     },
   },
   {
-    tableName: "trx_ipk",
+    tableName: "trx_pilihan_program_studi",
     timestamps: false,
-  },
+  }
 );
 
-module.exports = TrxIpk;
+module.exports = TrxPilihanProgramStudi;

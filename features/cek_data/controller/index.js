@@ -1,44 +1,54 @@
 const { TrxBeasiswa } = require("../../../models");
+const { Op } = require("sequelize");
 const { successResponse, errorResponse } = require("../../../common/response");
 
-exports.cekDataByNik = async (req, res) => {
+// 1. Nama fungsi diubah menjadi cekDataByKeyword
+exports.cekDataByKeyword = async (req, res) => {
   try {
-    const { nik } = req.query;
+    // 2. Mengambil parameter keyword dari frontend
+    const { keyword } = req.query;
 
-    if (!nik) {
-      return errorResponse(res, "Parameter NIK tidak boleh kosong.");
+    if (!keyword) {
+      return errorResponse(res, "Parameter pencarian (NIK atau Kode Pendaftaran) tidak boleh kosong.");
     }
 
-    // Mencari data berdasarkan NIK. 
-    // Menggunakan findAll untuk mengantisipasi jika 1 NIK mendaftar di 2 batch beasiswa yang berbeda.
+    // 3. Mencari berdasarkan NIK ATAU Kode Pendaftaran
     const data = await TrxBeasiswa.findAll({
-      where: { nik: nik },
-      order: [["id_trx_beasiswa", "DESC"]] // Urutkan dari data pendaftaran terbaru
+      where: {
+        [Op.or]: [
+          { nik: keyword },
+          { kode_pendaftaran: keyword }
+        ]
+      },
+      order: [["id_trx_beasiswa", "DESC"]] 
     });
 
     if (!data || data.length === 0) {
-      // Jika data tidak ada, kita kembalikan response sukses tapi dengan array kosong agar frontend mudah menanganinya
-      return successResponse(res, "Data tidak ditemukan untuk NIK tersebut.", []);
+      return successResponse(res, "Data tidak ditemukan untuk pencarian tersebut.", []);
     }
 
     return successResponse(res, "Data pendaftar berhasil ditemukan.", data);
   } catch (error) {
-    console.error("Error cekDataByNik:", error);
+    console.error("Error cekDataByKeyword:", error);
     return errorResponse(res, "Internal Server Error");
   }
 };
 
 exports.cekStatusPublic = async (req, res) => {
   try {
-    const { nik } = req.query;
+    const { keyword } = req.query;
 
-    if (!nik) {
-      return errorResponse(res, "Parameter NIK tidak boleh kosong.");
+    if (!keyword) {
+      return errorResponse(res, "Parameter pencarian tidak boleh kosong.");
     }
 
-    // Mengambil data secara SPESIFIK. Hanya kolom yang tidak sensitif yang diambil!
     const data = await TrxBeasiswa.findAll({
-      where: { nik: nik },
+      where: {
+        [Op.or]: [
+          { nik: keyword },
+          { kode_pendaftaran: keyword }
+        ]
+      },
       attributes: [
         "nama_lengkap", 
         "nama_beasiswa", 
