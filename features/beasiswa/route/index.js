@@ -133,7 +133,6 @@ router.get("/detail-pendaftar/:idTrxBeasiswa", getDetailPendaftar);
 router.get('/pilihan-program-studi/:idTrxBeasiswa', getPilihanProgramStudiWithDetails);
 router.get('/pilihan-prodi-form/:idTrxBeasiswa', getPilihanProgramStudiForForm);
 router.get('/download-rekap-daerah', downloadRekapBeasiswaDaerah);
-
 router.get('/total', getTotalTrxBeasiswa);
 router.get('/verifikator/beban', getBebanVerifikator);
 router.get("/:idTrxBeasiswa/catatan-verifikasi", getCatatanVerifikasi);

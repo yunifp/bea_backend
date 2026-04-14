@@ -7,7 +7,7 @@ const multerErrorHandler = require("./common/middleware/multerErrorHandler");
 const path = require("path");
 const checkAuthorization = require("./common/middleware/auth_middleware");
 const cekDataController = require("./features/cek_data/controller");
-  
+
 const app = express();
 app.set("trust proxy", true);
 app.use(
@@ -71,7 +71,7 @@ app.use(
 
 app.use(
   "/api/laporan/pendaftar",
-  checkAuthorization, 
+  checkAuthorization,
   require("./features/laporan-pendaftar/route")
 );
 

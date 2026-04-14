@@ -36,11 +36,48 @@ const syncTagSktm = async (id_trx_beasiswa) => {
   return tag_sktm;
 };
 
+const syncKluster = async (id_trx_beasiswa, id_ref_sktm) => {
+  // Cek apakah dokumen SKTM sudah diupload
+  const sktmDoc = await TrxDokumenUmum.findOne({
+    where: { id_trx_beasiswa, id_ref_dokumen: id_ref_sktm },
+  });
+
+  const hasSktm = !!sktmDoc?.file;
+
+  const id_kluster = hasSktm ? 2 : 1;
+  const nama_kluster = hasSktm ? "Afirmasi" : "Reguler";
+
+  // Update ke tabel transaksi beasiswa
+  await TrxBeasiswa.update(
+    { id_kluster, nama_kluster },
+    { where: { id_trx_beasiswa } }
+  );
+
+  return { id_kluster, nama_kluster };
+};
+
 exports.uploadPersyaratan = async (req, res) => {
   try {
     const { id_trx_beasiswa, id_ref_dokumen, nama_dokumen_persyaratan } = req.body;
     const { filename } = req.file;
     const { kategori } = req.params;
+
+    const id_is_kabkota = [1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13];
+    const id_is_prov = [7, 8];
+    const ID_REF_SKTM = 13;
+
+    let is_true_kabkot = "N";
+    let is_true_prov = "N";
+
+    if (kategori === "umum") {
+      if (id_is_kabkota.includes(Number(id_ref_dokumen))) {
+        is_true_kabkot = "Y";
+      }
+
+      if (id_is_prov.includes(Number(id_ref_dokumen))) {
+        is_true_prov = "Y";
+      }
+    }
 
     let existingData;
     if (kategori === "umum") {
@@ -62,7 +99,14 @@ exports.uploadPersyaratan = async (req, res) => {
     if (existingData) {
       if (kategori === "umum") {
         await TrxDokumenUmum.update(
-          { nama_dokumen_persyaratan, file: filename, timestamp: new Date(), verifikator_catatan: null },
+          {
+            nama_dokumen_persyaratan,
+            file: filename,
+            timestamp: new Date(),
+            verifikator_catatan: null,
+            is_kabkota: is_true_kabkot,
+            is_prov: is_true_prov,
+          },
           { where: { id_trx_beasiswa, id_ref_dokumen } }
         );
         returnData = await TrxDokumenUmum.findOne({ where: { id_trx_beasiswa, id_ref_dokumen } });
@@ -82,29 +126,50 @@ exports.uploadPersyaratan = async (req, res) => {
     } else {
       if (kategori === "umum") {
         returnData = await TrxDokumenUmum.create({
-          id_trx_beasiswa, id_ref_dokumen, nama_dokumen_persyaratan, file: filename, timestamp: new Date(),
+          id_trx_beasiswa,
+          id_ref_dokumen,
+          nama_dokumen_persyaratan,
+          file: filename,
+          timestamp: new Date(),
+          is_kabkota: is_true_kabkot,
+          is_prov: is_true_prov,
         });
       } else if (kategori === "khusus") {
         returnData = await TrxDokumenKhusus.create({
-          id_trx_beasiswa, id_ref_dokumen, nama_dokumen_persyaratan, file: filename, timestamp: new Date(),
+          id_trx_beasiswa,
+          id_ref_dokumen,
+          nama_dokumen_persyaratan,
+          file: filename,
+          timestamp: new Date(),
         });
       } else if (kategori === "dinas") {
         returnData = await TrxDokumenDinasDaerah.create({
-          id_trx_beasiswa, id_ref_dokumen, nama_dokumen_persyaratan, file: filename, timestamp: new Date(),
+          id_trx_beasiswa,
+          id_ref_dokumen,
+          nama_dokumen_persyaratan,
+          file: filename,
+          timestamp: new Date(),
         });
       }
     }
 
-    // ✅ Sync tag_sktm setelah upload dokumen umum
+    // Sync tag_sktm setelah upload dokumen umum
     let tag_sktm = null;
     if (kategori === "umum") {
       tag_sktm = await syncTagSktm(id_trx_beasiswa);
     }
 
+    // Sync kluster berdasarkan keberadaan dokumen SKTM
+    let klusterData = null;
+    if (kategori === "umum") {
+      klusterData = await syncKluster(id_trx_beasiswa, ID_REF_SKTM);
+    }
+
     const mappedData = {
       ...returnData.dataValues,
       file: getFileUrl(req, "persyaratan", returnData.file),
-      ...(tag_sktm !== null && { tag_sktm }), // kirim ke frontend jika perlu
+      ...(tag_sktm !== null && { tag_sktm }),
+      ...(klusterData !== null && { ...klusterData }),
     };
 
     return successResponse(res, "File berhasil diupload", mappedData);
@@ -113,6 +178,99 @@ exports.uploadPersyaratan = async (req, res) => {
     return errorResponse(res, "Internal Server Error");
   }
 };
+
+// exports.uploadPersyaratan = async (req, res) => {
+//   try {
+//     const { id_trx_beasiswa, id_ref_dokumen, nama_dokumen_persyaratan } = req.body;
+//     const { filename } = req.file;
+//     const { kategori } = req.params;
+
+//     const id_is_kabkota = [1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13];
+//     const id_is_prov = [7, 8];
+
+//     let is_true_kabkot = "N";
+//     let is_true_prov = "N";
+
+//     if (kategori === "umum") {
+//       if (id_is_kabkota.includes(Number(id_ref_dokumen))) {
+//         is_true_kabkot = "Y";
+//       }
+
+//       if (id_is_prov.includes(Number(id_ref_dokumen))) {
+//         is_true_prov = "Y";
+//       }
+//     }
+//     let existingData;
+//     if (kategori === "umum") {
+//       existingData = await TrxDokumenUmum.findOne({
+//         where: { id_trx_beasiswa, id_ref_dokumen },
+//       });
+//     } else if (kategori === "khusus") {
+//       existingData = await TrxDokumenKhusus.findOne({
+//         where: { id_trx_beasiswa, id_ref_dokumen },
+//       });
+//     } else if (kategori === "dinas") {
+//       existingData = await TrxDokumenDinasDaerah.findOne({
+//         where: { id_trx_beasiswa, id_ref_dokumen },
+//       });
+//     }
+
+//     let returnData;
+
+//     if (existingData) {
+//       if (kategori === "umum") {
+//         await TrxDokumenUmum.update(
+//           { nama_dokumen_persyaratan, file: filename, timestamp: new Date(), verifikator_catatan: null, is_kabkota: is_true_kabkot, is_prov: is_true_prov },
+//           { where: { id_trx_beasiswa, id_ref_dokumen } }
+//         );
+//         returnData = await TrxDokumenUmum.findOne({ where: { id_trx_beasiswa, id_ref_dokumen } });
+//       } else if (kategori === "khusus") {
+//         await TrxDokumenKhusus.update(
+//           { nama_dokumen_persyaratan, file: filename, timestamp: new Date(), verifikator_catatan: null },
+//           { where: { id_trx_beasiswa, id_ref_dokumen } }
+//         );
+//         returnData = await TrxDokumenKhusus.findOne({ where: { id_trx_beasiswa, id_ref_dokumen } });
+//       } else if (kategori === "dinas") {
+//         await TrxDokumenDinasDaerah.update(
+//           { nama_dokumen_persyaratan, file: filename, timestamp: new Date(), verifikator_catatan: null },
+//           { where: { id_trx_beasiswa, id_ref_dokumen } }
+//         );
+//         returnData = await TrxDokumenDinasDaerah.findOne({ where: { id_trx_beasiswa, id_ref_dokumen } });
+//       }
+//     } else {
+//       if (kategori === "umum") {
+//         returnData = await TrxDokumenUmum.create({
+//           id_trx_beasiswa, id_ref_dokumen, nama_dokumen_persyaratan, file: filename, timestamp: new Date(), is_kabkota: is_true_kabkot, is_prov: is_true_prov
+//         });
+//       } else if (kategori === "khusus") {
+//         returnData = await TrxDokumenKhusus.create({
+//           id_trx_beasiswa, id_ref_dokumen, nama_dokumen_persyaratan, file: filename, timestamp: new Date(),
+//         });
+//       } else if (kategori === "dinas") {
+//         returnData = await TrxDokumenDinasDaerah.create({
+//           id_trx_beasiswa, id_ref_dokumen, nama_dokumen_persyaratan, file: filename, timestamp: new Date(),
+//         });
+//       }
+//     }
+
+//     // ✅ Sync tag_sktm setelah upload dokumen umum
+//     let tag_sktm = null;
+//     if (kategori === "umum") {
+//       tag_sktm = await syncTagSktm(id_trx_beasiswa);
+//     }
+
+//     const mappedData = {
+//       ...returnData.dataValues,
+//       file: getFileUrl(req, "persyaratan", returnData.file),
+//       ...(tag_sktm !== null && { tag_sktm }), // kirim ke frontend jika perlu
+//     };
+
+//     return successResponse(res, "File berhasil diupload", mappedData);
+//   } catch (error) {
+//     console.log(error);
+//     return errorResponse(res, "Internal Server Error");
+//   }
+// };
 
 exports.getPersyaratanUploaded = async (req, res) => {
   try {

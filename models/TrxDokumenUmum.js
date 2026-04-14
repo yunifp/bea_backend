@@ -56,6 +56,8 @@ const TrxDokumenUmum = sequelize.define(
       type: DataTypes.DATE,
       allowNull: true,
     },
+    is_kabkota: DataTypes.ENUM("N", "Y"),
+    is_prov: DataTypes.ENUM("N", "Y"),
   },
   {
     tableName: "trx_dokumen_umum",

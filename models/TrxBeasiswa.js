@@ -304,8 +304,16 @@ const TrxBeasiswa = sequelize.define(
       defaultValue: "0",
     },
     timestamp_lock_selektor: DataTypes.DATE(),
+    id_pt_final: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
     pt_final: {
       type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    id_prodi_final: {
+      type: DataTypes.INTEGER,
       allowNull: true,
     },
     prodi_final: {

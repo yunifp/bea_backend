@@ -1,6 +1,7 @@
 const { Op } = require("sequelize");
 const { TrxBeasiswa, sequelize } = require("../../../models");
 const { successResponse, errorResponse } = require("../../../common/response");
+const excelJS = require("exceljs");
 
 // ==========================================
 // 1. Get Data Master Penetapan (Halaman Utama)
@@ -102,5 +103,84 @@ exports.cekDokumenPenetapan = async (req, res) => {
     });
   } catch (error) {
     return errorResponse(res, "Gagal mengecek dokumen");
+  }
+};
+
+
+exports.downloadDataPenetapan = async (req, res) => {
+  try {
+    const id_ref = req.query.id_ref || null;
+    
+    const whereCondition = { id_flow: 14 };
+    if (id_ref) whereCondition.id_ref_beasiswa = id_ref;
+
+    // Ambil semua data tanpa pagination
+    const data = await TrxBeasiswa.findAll({
+      where: whereCondition,
+      attributes: [
+        "kode_pendaftaran",
+        "nama_lengkap",
+        "nama_kluster",
+        "pt_final",
+        "prodi_final",
+        "urutan_ranking"
+      ],
+      order: [["urutan_ranking", "ASC"]],
+    });
+
+    if (!data || data.length === 0) {
+      return res.status(404).send("Data tidak ditemukan");
+    }
+
+    const workbook = new excelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Data Peserta Diterima");
+
+    // Header Kolom
+    worksheet.columns = [
+      { header: "No", key: "no", width: 5 },
+      { header: "Kode Pendaftaran", key: "kode_pendaftaran", width: 20 },
+      { header: "Nama Lengkap", key: "nama_lengkap", width: 35 },
+      { header: "Kluster", key: "nama_kluster", width: 20 },
+      { header: "Kampus Diterima", key: "pt_final", width: 35 },
+      { header: "Program Studi Diterima", key: "prodi_final", width: 35 },
+    ];
+
+    // Isi Data
+    data.forEach((item, index) => {
+      worksheet.addRow({
+        no: index + 1,
+        kode_pendaftaran: item.kode_pendaftaran,
+        nama_lengkap: item.nama_lengkap,
+        nama_kluster: item.nama_kluster,
+        pt_final: item.pt_final,
+        prodi_final: item.prodi_final,
+      });
+    });
+
+    // Style Header
+    worksheet.getRow(1).eachCell((cell) => {
+      cell.font = { bold: true };
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE0E0E0' }
+      };
+    });
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=Data_Penetapan_${id_ref || 'All'}.xlsx`
+    );
+
+    await workbook.xlsx.write(res);
+    res.status(200).end();
+
+  } catch (error) {
+    console.error("Error downloadDataPenetapan:", error);
+    return res.status(500).send("Internal Server Error");
   }
 };

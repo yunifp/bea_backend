@@ -533,7 +533,7 @@ exports.getTransaksiBeasiswaByPaginationSeleksiAdministrasiDaerah = async (
     if (dinas == "kabkota") {
       baseCondition.id_flow != [0, 1, 2,];
     } else if (dinas == "provinsi") {
-      baseCondition.id_flow = 7;
+      baseCondition.id_flow != [0, 1, 2,];
     }
     console.log(baseCondition);
 
@@ -649,7 +649,7 @@ exports.createInitialTransaksi = async (req, res) => {
         nama_beasiswa,
         id_users: idUser,
         id_flow: 0,
-        flow: "Draft",
+        flow: "Pra Draft",
         created_at: new Date(),
       };
 
@@ -790,366 +790,6 @@ exports.getFullDataBeasiswa = async (req, res) => {
     return errorResponse(res, "Internal Server Error");
   }
 };
-
-// exports.submitBeasiswa = async (req, res) => {
-//   try {
-//     const {
-//       id_trx_beasiswa,
-//       is_draft,
-//       nama_lengkap,
-//       nik,
-//       nkk,
-//       jenis_kelamin,
-//       no_hp,
-//       email,
-//       tanggal_lahir,
-//       tempat_lahir,
-//       agama,
-//       suku,
-//       pekerjaan,
-//       instansi_pekerjaan,
-//       berat_badan,
-//       tinggi_badan,
-
-//       tinggal_provinsi,
-//       tinggal_kabkot,
-//       tinggal_kecamatan,
-//       tinggal_kelurahan,
-//       tinggal_dusun,
-//       tinggal_kode_pos,
-//       tinggal_rt,
-//       tinggal_rw,
-//       tinggal_alamat,
-//       kerja_provinsi,
-//       kerja_kabkot,
-//       kerja_kecamatan,
-//       kerja_kelurahan,
-//       kerja_dusun,
-//       kerja_kode_pos,
-//       kerja_rt,
-//       kerja_rw,
-//       kerja_alamat,
-
-//       alamat_kerja_sama_dengan_tinggal,
-
-//       ayah_nama,
-//       ayah_nik,
-//       ayah_jenjang_pendidikan,
-//       ayah_pekerjaan,
-//       ayah_penghasilan,
-//       ayah_status_hidup,
-//       ayah_status_kekerabatan,
-//       ayah_tempat_lahir,
-//       ayah_tanggal_lahir,
-//       ayah_no_hp,
-//       ayah_email,
-//       ayah_alamat,
-
-//       ibu_nama,
-//       ibu_nik,
-//       ibu_jenjang_pendidikan,
-//       ibu_pekerjaan,
-//       ibu_penghasilan,
-//       ibu_status_hidup,
-//       ibu_status_kekerabatan,
-//       ibu_tempat_lahir,
-//       ibu_tanggal_lahir,
-//       ibu_no_hp,
-//       ibu_email,
-//       ibu_alamat,
-
-//       wali_nama,
-//       wali_nik,
-//       wali_jenjang_pendidikan,
-//       wali_pekerjaan,
-//       wali_penghasilan,
-//       wali_status_hidup,
-//       wali_status_kekerabatan,
-//       wali_tempat_lahir,
-//       wali_tanggal_lahir,
-//       wali_no_hp,
-//       wali_email,
-//       wali_alamat,
-
-//       sekolah_provinsi,
-//       sekolah_kabkot,
-//       jenjang_sekolah,
-//       sekolah,
-//       jurusan,
-//       tahun_lulus,
-//       nama_jurusan_sekolah,
-//       id_verifikator,
-
-//       kondisi_buta_warna,
-//       pilihan_program_studi,
-
-//       kode_dinas_provinsi,
-//       kode_dinas_kabkota,
-
-//       jalur,
-//     } = req.body;
-
-//     // Ambil file kalau ada
-//     // const file = req.file;
-
-//     // Helper untuk aman split string "id#nama"
-//     const safeSplit = (value = "", delimiter = "#") => {
-//       if (typeof value !== "string" || !value.includes(delimiter)) {
-//         return [null, null];
-//       }
-//       const parts = value
-//         .split(delimiter)
-//         .map((v) => (v === "" || v === "null" ? null : v));
-//       return [parts[0], parts[1]];
-//     };
-
-//     // Helper untuk ubah "" jadi null
-//     const normalize = (val) => {
-//       if (val === "" || val === "null" || val === undefined) return null;
-//       return val;
-//     };
-
-//     const [idPekerjaan, namaPekerjaan] = safeSplit(pekerjaan);
-//     const [idInstansiPekerjaan, namaInstansiPekerjaan] =
-//       safeSplit(instansi_pekerjaan);
-
-//     const [tinggalKodeProv, tinggalNamaProv] = safeSplit(tinggal_provinsi);
-//     const [tinggalKodeKab, tinggalNamaKab] = safeSplit(tinggal_kabkot);
-//     const [tinggalKodeKec, tinggalNamaKec] = safeSplit(tinggal_kecamatan);
-//     const [tinggalKodeKel, tinggalNamaKel] = safeSplit(tinggal_kelurahan);
-//     const [tinggalKodeDusun, tinggalNamaDusun] = safeSplit(tinggal_dusun);
-
-//     const [kerjaKodeProv, kerjaNamaProv] = safeSplit(kerja_provinsi);
-//     const [kerjaKodeKab, kerjaNamaKab] = safeSplit(kerja_kabkot);
-//     const [kerjaKodeKec, kerjaNamaKec] = safeSplit(kerja_kecamatan);
-//     const [kerjaKodeKel, kerjaNamaKel] = safeSplit(kerja_kelurahan);
-//     const [kerjaKodeDusun, kerjaNamaDusun] = safeSplit(kerja_dusun);
-
-//     const [ayahStatusHidup, ayahNamaStatusHidup] = safeSplit(ayah_status_hidup);
-//     const [ayahStatusKekerabatan, ayahNamaStatusKekerabatan] = safeSplit(
-//       ayah_status_kekerabatan,
-//     );
-//     const [ibuStatusHidup, ibuNamaStatusHidup] = safeSplit(ibu_status_hidup);
-//     const [ibuStatusKekerabatan, ibuNamaStatusKekerabatan] = safeSplit(
-//       ibu_status_kekerabatan,
-//     );
-//     const [waliStatusHidup, waliNamaStatusHidup] = safeSplit(wali_status_hidup);
-//     const [waliStatusKekerabatan, waliNamaStatusKekerabatan] = safeSplit(
-//       wali_status_kekerabatan,
-//     );
-
-//     const [sekolahKodeProv, sekolahNamaProv] = safeSplit(sekolah_provinsi);
-//     const [sekolahKodeKab, sekolahNamaKab] = safeSplit(sekolah_kabkot);
-//     const [idJenjangSekolah, jenjangSekolah] = safeSplit(jenjang_sekolah);
-
-//     const [idJalur, namaJalur] = safeSplit(jalur);
-
-
-//     const [idDinasprov, namaDinasprov] = safeSplit(kode_dinas_provinsi);
-//     const [idDinaskabkota, namaDinaskabkota] = safeSplit(kode_dinas_kabkota);
-
-//     const updateData = {
-//       nama_lengkap: normalize(nama_lengkap),
-//       nik: normalize(nik),
-//       nkk: normalize(nkk),
-//       jenis_kelamin: normalize(jenis_kelamin),
-//       no_hp: normalize(no_hp),
-//       email: normalize(email),
-//       tanggal_lahir: normalize(tanggal_lahir),
-//       tempat_lahir: normalize(tempat_lahir),
-//       agama: normalize(agama),
-//       suku: normalize(suku),
-//       id_pekerjaan: normalize(idPekerjaan),
-//       pekerjaan: normalize(namaPekerjaan),
-//       id_instansi_pekerjaan: normalize(idInstansiPekerjaan),
-//       instansi_pekerjaan: normalize(namaInstansiPekerjaan),
-//       berat_badan: normalize(berat_badan),
-//       tinggi_badan: normalize(tinggi_badan),
-
-//       tinggal_kode_prov: normalize(tinggalKodeProv),
-//       tinggal_prov: normalize(tinggalNamaProv),
-//       tinggal_kode_kab: normalize(tinggalKodeKab),
-//       tinggal_kab_kota: normalize(tinggalNamaKab),
-//       tinggal_kode_kec: normalize(tinggalKodeKec),
-//       tinggal_kec: normalize(tinggalNamaKec),
-//       tinggal_kode_kel: normalize(tinggalKodeKel),
-//       tinggal_kel: normalize(tinggalNamaKel),
-//       tinggal_kode_dusun: normalize(tinggalKodeDusun),
-//       tinggal_dusun: normalize(tinggalNamaDusun),
-//       tinggal_kode_pos: normalize(tinggal_kode_pos),
-//       tinggal_rt: normalize(tinggal_rt),
-//       tinggal_rw: normalize(tinggal_rw),
-//       tinggal_alamat: normalize(tinggal_alamat),
-//       kerja_kode_prov: normalize(kerjaKodeProv),
-//       kerja_prov: normalize(kerjaNamaProv),
-//       kerja_kode_kab: normalize(kerjaKodeKab),
-//       kerja_kab_kota: normalize(kerjaNamaKab),
-//       kerja_kode_kec: normalize(kerjaKodeKec),
-//       kerja_kec: normalize(kerjaNamaKec),
-//       kerja_kode_kel: normalize(kerjaKodeKel),
-//       kerja_kel: normalize(kerjaNamaKel),
-//       kerja_kode_dusun: normalize(kerjaKodeDusun),
-//       kerja_dusun: normalize(kerjaNamaDusun),
-//       kerja_kode_pos: normalize(kerja_kode_pos),
-//       kerja_rt: normalize(kerja_rt),
-//       kerja_rw: normalize(kerja_rw),
-//       kerja_alamat: normalize(kerja_alamat),
-
-//       alamat_kerja_sama_dengan_tinggal: normalize(alamat_kerja_sama_dengan_tinggal),
-
-//       ayah_nama: normalize(ayah_nama),
-//       ayah_nik: normalize(ayah_nik),
-//       ayah_jenjang_pendidikan: normalize(ayah_jenjang_pendidikan),
-//       ayah_pekerjaan: normalize(ayah_pekerjaan),
-//       ayah_penghasilan: normalize(ayah_penghasilan),
-//       ayah_id_status_hidup: normalize(ayahStatusHidup),
-//       ayah_status_hidup: normalize(ayahNamaStatusHidup),
-//       ayah_id_status_kekerabatan: normalize(ayahStatusKekerabatan),
-//       ayah_status_kekerabatan: normalize(ayahNamaStatusKekerabatan),
-//       ayah_tempat_lahir: normalize(ayah_tempat_lahir),
-//       ayah_tanggal_lahir: normalize(ayah_tanggal_lahir),
-//       ayah_no_hp: normalize(ayah_no_hp),
-//       ayah_email: normalize(ayah_email),
-//       ayah_alamat: normalize(ayah_alamat),
-
-//       ibu_nama: normalize(ibu_nama),
-//       ibu_nik: normalize(ibu_nik),
-//       ibu_jenjang_pendidikan: normalize(ibu_jenjang_pendidikan),
-//       ibu_pekerjaan: normalize(ibu_pekerjaan),
-//       ibu_penghasilan: normalize(ibu_penghasilan),
-//       ibu_id_status_hidup: normalize(ibuStatusHidup),
-//       ibu_status_hidup: normalize(ibuNamaStatusHidup),
-//       ibu_id_status_kekerabatan: normalize(ibuStatusKekerabatan),
-//       ibu_status_kekerabatan: normalize(ibuNamaStatusKekerabatan),
-//       ibu_tempat_lahir: normalize(ibu_tempat_lahir),
-//       ibu_tanggal_lahir: normalize(ibu_tanggal_lahir),
-//       ibu_no_hp: normalize(ibu_no_hp),
-//       ibu_email: normalize(ibu_email),
-//       ibu_alamat: normalize(ibu_alamat),
-
-//       wali_nama: normalize(wali_nama),
-//       wali_nik: normalize(wali_nik),
-//       wali_jenjang_pendidikan: normalize(wali_jenjang_pendidikan),
-//       wali_pekerjaan: normalize(wali_pekerjaan),
-//       wali_penghasilan: normalize(wali_penghasilan),
-//       wali_id_status_hidup: normalize(waliStatusHidup),
-//       wali_status_hidup: normalize(waliNamaStatusHidup),
-//       wali_id_status_kekerabatan: normalize(waliStatusKekerabatan),
-//       wali_status_kekerabatan: normalize(waliNamaStatusKekerabatan),
-//       wali_tempat_lahir: normalize(wali_tempat_lahir),
-//       wali_tanggal_lahir: normalize(wali_tanggal_lahir),
-//       wali_no_hp: normalize(wali_no_hp),
-//       wali_email: normalize(wali_email),
-//       wali_alamat: normalize(wali_alamat),
-
-//       sekolah_kode_prov: normalize(sekolahKodeProv),
-//       sekolah_prov: normalize(sekolahNamaProv),
-//       sekolah_kode_kab: normalize(sekolahKodeKab),
-//       sekolah_kab_kota: normalize(sekolahNamaKab),
-//       id_jenjang_sekolah: normalize(idJenjangSekolah),
-//       jenjang_sekolah: normalize(jenjangSekolah),
-//       sekolah: normalize(sekolah),
-//       jurusan: normalize(jurusan),
-//       tahun_lulus: normalize(tahun_lulus),
-//       nama_jurusan_sekolah: normalize(nama_jurusan_sekolah),
-
-//       kondisi_buta_warna: normalize(kondisi_buta_warna),
-
-//       kode_dinas_provinsi: normalize(idDinasprov),
-//       kode_dinas_kabkota: normalize(idDinaskabkota),
-
-//       id_verifikator: normalize(id_verifikator),
-
-//       id_jalur: normalize(idJalur),
-//       jalur: normalize(namaJalur),
-//       updated_at: new Date(),
-//     };
-
-//     // if (file) {
-//     //   updateData.foto = file.filename; // atau file.path kalau ingin simpan path lengkap
-//     // }
-
-//     const files = req.files || {};
-//     if (files["foto"]?.[0]) updateData.foto = files["foto"][0].filename;
-//     if (files["foto_depan"]?.[0]) updateData.foto_depan = files["foto_depan"][0].filename;
-//     if (files["foto_samping_kiri"]?.[0]) updateData.foto_samping_kiri = files["foto_samping_kiri"][0].filename;
-//     if (files["foto_samping_kanan"]?.[0]) updateData.foto_samping_kanan = files["foto_samping_kanan"][0].filename;
-//     if (files["foto_belakang"]?.[0]) updateData.foto_belakang = files["foto_belakang"][0].filename;
-
-//     // Ambil current flow
-//     const trxBeasiswa = await TrxBeasiswa.findOne({
-//       where: { id_trx_beasiswa },
-//       attributes: ["id_flow", "kode_pendaftaran"],
-//     });
-
-//     const currentFlow = trxBeasiswa?.id_flow;
-
-//     const is_draftx = is_draft === "true";
-
-//     if (!is_draftx) {
-//       if (currentFlow === 1) {
-//         updateData.id_flow = 2;
-//         updateData.flow = "Verifikasi";
-
-//         // Hanya generate jika belum punya kode pendaftaran
-//         if (!trxBeasiswa.kode_pendaftaran) {
-//           const kodePendaftaran = await generateKodePendaftaran(idJalur);
-//           updateData.kode_pendaftaran = kodePendaftaran;
-//         }
-//       } else if (currentFlow === 4) {
-//         updateData.id_flow = 5;
-//         updateData.flow = "Verifikasi Hasil Perbaikan";
-//       } else if (currentFlow === 9) {
-//         updateData.id_flow = 10;
-//         updateData.flow = "Verifikasi Hasil Perbaikan";
-//       }
-//     }
-
-
-//     await TrxBeasiswa.update(updateData, {
-//       where: { id_trx_beasiswa },
-//     });
-
-//     // Untuk Pilihan Prodi
-//     await TrxPilihanProgramStudi.destroy({
-//       where: { id_trx_beasiswa },
-//     });
-
-//     const pilihan_program_studix = JSON.parse(req.body.pilihan_program_studi);
-
-//     const insertDataPilihanProgramSudi = pilihan_program_studix.map((item) => {
-//       const [id_pt, nama_pt] = safeSplit(item.perguruan_tinggi);
-//       const [id_prodi, nama_prodi] = safeSplit(item.program_studi);
-
-//       return {
-//         id_trx_beasiswa,
-//         id_pt: id_pt ? Number(id_pt) : null,
-//         nama_pt,
-//         id_prodi: id_prodi ? Number(id_prodi) : null,
-//         nama_prodi,
-//       };
-//     });
-
-//     if (insertDataPilihanProgramSudi.length > 0) {
-//       await TrxPilihanProgramStudi.bulkCreate(insertDataPilihanProgramSudi);
-//     }
-
-//     return successResponse(res, "Transaksi berhasil diperbarui");
-//   } catch (error) {
-//     console.error(error);
-//     return errorResponse(res, "Internal Server Error");
-//   }
-// };
-
-// ============================================================
-// PATCH untuk exports.submitBeasiswa
-// Ganti seluruh fungsi submitBeasiswa di controller dengan ini
-// ============================================================
-// Asumsi: middleware diubah dari upload.single("foto")
-// menjadi upload.fields([...]) — lihat konfigurasi middleware di bawah
-// ============================================================
-// ⚠️  Pastikan TrxDokumenUmum ada di destructure require models:
-// const { TrxBeasiswa, TrxPilihanProgramStudi, TrxDokumenUmum } = require("../../../models");
 
 
 exports.submitBeasiswa = async (req, res) => {
@@ -1442,6 +1082,7 @@ exports.submitBeasiswa = async (req, res) => {
     if (!is_draftx) {
       if (currentFlow === 0) {
         updateData.id_flow = 1;
+        updateData.is_active = 1;
         updateData.flow = "Draft";
 
         if (!trxBeasiswa.kode_pendaftaran) {
@@ -3464,6 +3105,7 @@ exports.getPendaftarForAssignment = async (req, res) => {
     const search = req.query.search || "";
     const filter = req.query.filter || "all"; // "all" | "assigned" | "unassigned"
     const id_verifikator = req.query.id_verifikator || null;
+    const status_filter = req.query.status_filter || "all";
 
     // ── Base condition ───────────────────────────────────────────────────────
     const baseCondition = {
@@ -3492,6 +3134,10 @@ exports.getPendaftarForAssignment = async (req, res) => {
       baseCondition.tag_lock_selektor = { [Op.ne]: "1" };
     }
 
+    if (status_filter !== "all") {
+      baseCondition.id_flow = status_filter;
+      // Jika filter menggunakan ID flow, gunakan: baseCondition.id_flow = status_filter;
+    }
 
     const whereCondition = search
       ? {

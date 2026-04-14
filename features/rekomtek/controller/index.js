@@ -1,23 +1,46 @@
 const { Op } = require("sequelize");
-const { TrxBeasiswa } = require("../../../models");
+const { TrxBeasiswa, User } = require("../../../models");
 const RefProgramStudi = require("../../../models/RefProgramStudi");
 const RefPerguruanTinggi = require("../../../models/RefPerguruanTinggi");
 const { successResponse, errorResponse } = require("../../../common/response");
 const ExcelJS = require("exceljs");
 const jwt = require("jsonwebtoken");
 
-const getUserContext = (req) => {
+const getUserContext = async (req) => {
   const authHeader = req.headers["authorization"];
   if (authHeader) {
     const token = authHeader.split(" ")[1];
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       
-      const roles = Array.isArray(decoded.role) ? decoded.role : [decoded.role];
+      let roleIds = [];
+      if (Array.isArray(decoded.role)) {
+        roleIds = decoded.role.map(r => typeof r === "object" ? Number(r.id) : Number(r));
+      } else if (decoded.role) {
+        roleIds = [Number(decoded.role)];
+      }
       
+      let namaKampus = null;
+
+      if (roleIds.includes(111) || roleIds.includes(113)) {
+        if (decoded.id_lembaga_pendidikan) {
+          const pt = await RefPerguruanTinggi.findByPk(decoded.id_lembaga_pendidikan);
+          if (pt) {
+            namaKampus = pt.nama_pt;
+          }
+        }
+        
+        if (!namaKampus && decoded.id) {
+          const userData = await User.findByPk(decoded.id);
+          if (userData) {
+            namaKampus = userData.perguruan_tinggi || userData.lembaga_pendidikan;
+          }
+        }
+      }
+
       return {
-        roles: roles,
-        lembaga_pendidikan: decoded.lembaga_pendidikan || null,
+        roles: roleIds,
+        nama_kampus: namaKampus,
       };
     } catch (error) {
       return null;
@@ -35,9 +58,14 @@ exports.getPendaftarRekomtek = async (req, res) => {
 
     const whereCondition = { id_flow: 12 };
     
-    const userCtx = getUserContext(req);
-    if (userCtx && userCtx.roles.includes(111) && userCtx.lembaga_pendidikan) {
-      whereCondition.pt_final = { [Op.like]: `%${userCtx.lembaga_pendidikan}%` };
+    const userCtx = await getUserContext(req);
+    
+    if (userCtx && (userCtx.roles.includes(111) || userCtx.roles.includes(113))) {
+      if (userCtx.nama_kampus) {
+        whereCondition.pt_final = { [Op.like]: `%${userCtx.nama_kampus}%` };
+      } else {
+        whereCondition.pt_final = "TIDAK_ADA_KAMPUS_DI_DATABASE";
+      }
     }
 
     if (search) {
@@ -68,7 +96,7 @@ exports.getPendaftarRekomtek = async (req, res) => {
       
       const prodiMaster = await RefProgramStudi.findOne({
         where: { nama_prodi: plainRow.prodi_final },
-        attributes: ['kuota']
+        attributes: ["kuota"]
       });
 
       return {
@@ -100,13 +128,13 @@ exports.prosesMengundurkanDiri = async (req, res) => {
     const namaProdi = pendaftar.prodi_final ? pendaftar.prodi_final.trim() : "";
 
     const ptMaster = await RefPerguruanTinggi.findOne({ where: { nama_pt: { [Op.like]: `%${namaPT}%` } } });
-    if (!ptMaster) return errorResponse(res, `Kampus "${namaPT}" tidak ditemukan di master.`, 404);
+    if (!ptMaster) return errorResponse(res, `Kampus tidak ditemukan di master.`, 404);
 
     const prodi = await RefProgramStudi.findOne({
       where: { id_pt: ptMaster.id_pt, nama_prodi: { [Op.like]: `%${namaProdi}%` } }
     });
 
-    if (!prodi) return errorResponse(res, `Prodi "${namaProdi}" tidak ditemukan di master.`, 404);
+    if (!prodi) return errorResponse(res, `Prodi tidak ditemukan di master.`, 404);
 
     await pendaftar.update({ status_undur_diri: "Y" });
 
@@ -115,7 +143,7 @@ exports.prosesMengundurkanDiri = async (req, res) => {
       { where: { id_prodi: prodi.id_prodi } }
     );
 
-    return successResponse(res, `Siswa berhasil mundur. Jatah slot kuota prodi telah dikembalikan (Bertambah).`);
+    return successResponse(res, `Siswa berhasil mundur.`);
   } catch (error) {
     return errorResponse(res, "Internal Server Error", 500);
   }
@@ -152,7 +180,7 @@ exports.batalMengundurkanDiri = async (req, res) => {
       { where: { id_prodi: prodi.id_prodi } }
     );
 
-    return successResponse(res, `Berhasil membatalkan undur diri. Slot kuota telah terisi kembali (Berkurang).`);
+    return successResponse(res, `Berhasil membatalkan undur diri.`);
   } catch (error) {
     return errorResponse(res, "Internal Server Error", 500);
   }
@@ -162,9 +190,14 @@ exports.downloadDataRekomtek = async (req, res) => {
   try {
     const whereCondition = { id_flow: 12 };
     
-    const userCtx = getUserContext(req);
-    if (userCtx && userCtx.roles.includes(111) && userCtx.lembaga_pendidikan) {
-      whereCondition.pt_final = { [Op.like]: `%${userCtx.lembaga_pendidikan}%` };
+    const userCtx = await getUserContext(req);
+    
+    if (userCtx && (userCtx.roles.includes(111) || userCtx.roles.includes(113))) {
+      if (userCtx.nama_kampus) {
+        whereCondition.pt_final = { [Op.like]: `%${userCtx.nama_kampus}%` };
+      } else {
+        whereCondition.pt_final = "TIDAK_ADA_KAMPUS_DI_DATABASE";
+      }
     }
 
     const rows = await TrxBeasiswa.findAll({
@@ -200,7 +233,7 @@ exports.downloadDataRekomtek = async (req, res) => {
     rows.forEach((row, index) => {
       let tglLahir = row.tanggal_lahir;
       if (tglLahir instanceof Date) {
-        tglLahir = tglLahir.toISOString().split('T')[0];
+        tglLahir = tglLahir.toISOString().split("T")[0];
       }
 
       worksheet.addRow({
@@ -227,12 +260,12 @@ exports.downloadDataRekomtek = async (req, res) => {
 
     worksheet.getRow(1).eachCell((cell) => {
       cell.font = { bold: true };
-      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFD9E1F2" } }; 
       
       cell.border = {
-        top: {style:'thin'}, left: {style:'thin'},
-        bottom: {style:'thin'}, right: {style:'thin'}
+        top: {style:"thin"}, left: {style:"thin"},
+        bottom: {style:"thin"}, right: {style:"thin"}
       };
     });
 
@@ -251,12 +284,15 @@ exports.uploadDokumenRekomtek = async (req, res) => {
     if (!req.file) return errorResponse(res, "File dokumen tidak ditemukan", 400);
     
     const filename = req.file.filename;
-
     const whereCondition = { id_flow: 12 };
+    const userCtx = await getUserContext(req);
     
-    const userCtx = getUserContext(req);
-    if (userCtx && userCtx.roles.includes(111) && userCtx.lembaga_pendidikan) {
-      whereCondition.pt_final = { [Op.like]: `%${userCtx.lembaga_pendidikan}%` };
+    if (userCtx && (userCtx.roles.includes(111) || userCtx.roles.includes(113))) {
+      if (userCtx.nama_kampus) {
+        whereCondition.pt_final = { [Op.like]: `%${userCtx.nama_kampus}%` };
+      } else {
+        whereCondition.pt_final = "TIDAK_ADA_KAMPUS_DI_DATABASE";
+      }
     }
 
     const [updatedCount] = await TrxBeasiswa.update(
@@ -274,9 +310,13 @@ exports.cekDokumenRekomtek = async (req, res) => {
   try {
     const whereCondition = { id_flow: 12, file_rekomendasi_teknis: { [Op.ne]: null } };
     
-    const userCtx = getUserContext(req);
-    if (userCtx && userCtx.roles.includes(111) && userCtx.lembaga_pendidikan) {
-      whereCondition.pt_final = { [Op.like]: `%${userCtx.lembaga_pendidikan}%` };
+    const userCtx = await getUserContext(req);
+    if (userCtx && (userCtx.roles.includes(111) || userCtx.roles.includes(113))) {
+      if (userCtx.nama_kampus) {
+        whereCondition.pt_final = { [Op.like]: `%${userCtx.nama_kampus}%` };
+      } else {
+        whereCondition.pt_final = "TIDAK_ADA_KAMPUS_DI_DATABASE";
+      }
     }
 
     const data = await TrxBeasiswa.findOne({
@@ -301,9 +341,13 @@ exports.kirimKeFlow14 = async (req, res) => {
       }
     };
     
-    const userCtx = getUserContext(req);
-    if (userCtx && userCtx.roles.includes(111) && userCtx.lembaga_pendidikan) {
-      whereCondition.pt_final = { [Op.like]: `%${userCtx.lembaga_pendidikan}%` };
+    const userCtx = await getUserContext(req);
+    if (userCtx && (userCtx.roles.includes(111) || userCtx.roles.includes(113))) {
+      if (userCtx.nama_kampus) {
+        whereCondition.pt_final = { [Op.like]: `%${userCtx.nama_kampus}%` };
+      } else {
+        whereCondition.pt_final = "TIDAK_ADA_KAMPUS_DI_DATABASE";
+      }
     }
 
     const [updatedCount] = await TrxBeasiswa.update(
@@ -315,7 +359,7 @@ exports.kirimKeFlow14 = async (req, res) => {
       return errorResponse(res, "Tidak ada data yang bisa dikirim.", 400);
     }
 
-    return successResponse(res, `Berhasil mengirim ${updatedCount} pendaftar ke Tahap Penetapan.`);
+    return successResponse(res, `Berhasil mengirim ${updatedCount} pendaftar.`);
   } catch (error) {
     return errorResponse(res, "Internal Server Error", 500);
   }
@@ -325,15 +369,19 @@ exports.getSummaryKuotaRekomtek = async (req, res) => {
   try {
     const whereCondition = { id_flow: 12 };
     
-    const userCtx = getUserContext(req);
-    if (userCtx && userCtx.roles.includes(111) && userCtx.lembaga_pendidikan) {
-      whereCondition.pt_final = { [Op.like]: `%${userCtx.lembaga_pendidikan}%` };
+    const userCtx = await getUserContext(req);
+    if (userCtx && (userCtx.roles.includes(111) || userCtx.roles.includes(113))) {
+      if (userCtx.nama_kampus) {
+        whereCondition.pt_final = { [Op.like]: `%${userCtx.nama_kampus}%` };
+      } else {
+        whereCondition.pt_final = "TIDAK_ADA_KAMPUS_DI_DATABASE";
+      }
     }
 
     const pendaftar = await TrxBeasiswa.findAll({
       where: whereCondition,
-      attributes: ['pt_final', 'prodi_final'],
-      group: ['pt_final', 'prodi_final']
+      attributes: ["pt_final", "prodi_final"],
+      group: ["pt_final", "prodi_final"]
     });
 
     const summary = await Promise.all(pendaftar.map(async (p) => {
