@@ -5,12 +5,12 @@ const {
   getListPenetapanMaster,
   getDetailPenetapan,
   cekDokumenPenetapan,
-  downloadDataPenetapan // <-- Tambahkan ini
+  downloadDataPenetapan
 } = require("../controller");
 
 router.get("/master", getListPenetapanMaster); 
 router.get("/detail", getDetailPenetapan);     
 router.get("/cek-dokumen", cekDokumenPenetapan);
-router.get("/download", downloadDataPenetapan); // <-- Rute baru untuk download
+router.get("/download", downloadDataPenetapan); 
 
 module.exports = router;

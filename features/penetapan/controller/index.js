@@ -1,5 +1,5 @@
 const { Op } = require("sequelize");
-const { TrxBeasiswa, sequelize } = require("../../../models");
+const { TrxBeasiswa, sequelize, TrxMahasiswaFinal } = require("../../../models");
 const { successResponse, errorResponse } = require("../../../common/response");
 const excelJS = require("exceljs");
 
@@ -25,9 +25,9 @@ exports.getListPenetapanMaster = async (req, res) => {
       id_ref_beasiswa: r.id_ref_beasiswa || 0,
       nama_penetapan: r.nama_beasiswa || "Penetapan Beasiswa 2025", 
       tanggal_penetapan: new Date().toISOString().split("T")[0], // Mockup Tanggal Hari Ini
-      instansi: "Kementerian Pertanian", // Mockup Instansi sesuai gambar
+      instansi: "Kementerian Pertanian", // Mockup Instansi (diabaikan jika di FE dihapus)
       jumlah_kuota: r.get("jumlah_penerima"),
-      keterangan: "Selesai"
+      keterangan: "Selesai" // Mockup Keterangan (diabaikan jika di FE dihapus)
     }));
 
     return successResponse(res, "Data master penetapan dimuat", {
@@ -106,7 +106,9 @@ exports.cekDokumenPenetapan = async (req, res) => {
   }
 };
 
-
+// ==========================================
+// 4. Download Data Penetapan
+// ==========================================
 exports.downloadDataPenetapan = async (req, res) => {
   try {
     const id_ref = req.query.id_ref || null;
@@ -182,5 +184,58 @@ exports.downloadDataPenetapan = async (req, res) => {
   } catch (error) {
     console.error("Error downloadDataPenetapan:", error);
     return res.status(500).send("Internal Server Error");
+  }
+};
+
+
+exports.getExternalMahasiswaFinal = async (req, res) => {
+  try {
+    const { id_pt_final, id_jenjang, tahun } = req.query;
+
+    const whereCondition = {};
+
+    if (id_pt_final) {
+      whereCondition.id_pt = id_pt_final;
+    }
+    
+    if (id_jenjang) {
+      let stringJenjang = "";
+      
+      const id = parseInt(id_jenjang, 10);
+      switch (id) {
+        case 1: stringJenjang = "D1"; break;
+        case 2: stringJenjang = "D2"; break;
+        case 3: stringJenjang = "D3"; break;
+        case 4: stringJenjang = "D4"; break;
+        case 5: stringJenjang = "S1"; break;
+        case 6: stringJenjang = "S2"; break;
+        case 7: stringJenjang = "S3"; break;
+        default: stringJenjang = null; 
+      }
+
+      if (stringJenjang) {
+         whereCondition.jenjang = { [Op.like]: `%${stringJenjang}%` };
+      } else {
+         whereCondition.jenjang = "TIDAK_ADA_MAPPING_JENJANG_INI"; 
+      }
+    }
+    
+    if (tahun) {
+      whereCondition.tahun_angkatan = tahun;
+    }
+
+    const rows = await TrxMahasiswaFinal.findAll({
+      where: whereCondition,
+      order: [["created_at", "DESC"]],
+      attributes: { exclude: [] } 
+    });
+
+    return successResponse(res, "Data Mahasiswa Final berhasil ditarik", {
+      result: rows,
+      total: rows.length,
+    });
+  } catch (error) {
+    console.error("GET EXTERNAL MAHASISWA FINAL ERROR:", error);
+    return errorResponse(res, "Internal Server Error", 500);
   }
 };

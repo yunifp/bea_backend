@@ -7,6 +7,8 @@ const multerErrorHandler = require("./common/middleware/multerErrorHandler");
 const path = require("path");
 const checkAuthorization = require("./common/middleware/auth_middleware");
 const cekDataController = require("./features/cek_data/controller");
+const { verifyApiKey } = require("./common/middleware/apiKey_middleware");
+const penetapanController = require("./features/penetapan/controller");
 
 const app = express();
 app.set("trust proxy", true);
@@ -25,6 +27,12 @@ app.use(
 );
 
 app.use("/uploads", express.static(process.env.FILE_URL || "E:/upload_palma"));
+
+app.get(
+  "/api/penetapan/external/mahasiswa-final",
+  verifyApiKey,
+  penetapanController.getExternalMahasiswaFinal
+);
 
 app.use(
   "/api/beasiswa/beasiswa",
@@ -61,6 +69,7 @@ app.use(
   checkAuthorization,
   require("./features/penetapan/route")
 );
+
 app.get("/api/cek-data/public", cekDataController.cekStatusPublic);
 
 app.use(

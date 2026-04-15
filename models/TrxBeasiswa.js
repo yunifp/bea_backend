@@ -324,6 +324,10 @@ const TrxBeasiswa = sequelize.define(
       type: DataTypes.INTEGER,
       allowNull: true,
     },
+    jenjang_final: {
+      type: DataTypes.STRING(20),
+      allowNull: true,
+    },
 
     id_kluster: {
       type: DataTypes.TINYINT,
