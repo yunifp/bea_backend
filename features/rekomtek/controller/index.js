@@ -418,7 +418,6 @@ exports.kirimKeFlow14 = async (req, res) => {
 
     for (const p of pendaftars) {
       try {
-        // Cek data di trx_mahasiswa_final memakai kode_pendaftaran karena tidak ada id_trx_beasiswa
         const existing = await TrxMahasiswaFinal.findOne({ 
           where: { kode_pendaftaran: p.kode_pendaftaran } 
         });
@@ -440,13 +439,11 @@ exports.kirimKeFlow14 = async (req, res) => {
 
         if (!jenjang_diterima) jenjang_diterima = "-";
 
-        // Pastikan kita update jenjang_final di trx_beasiswa agar datanya permanen
         await TrxBeasiswa.update(
           { jenjang_final: jenjang_diterima },
           { where: { id_trx_beasiswa: p.id_trx_beasiswa } }
         );
 
-        // Map column EXACTLY sesuai db trx_mahasiswa_final
         if (!existing) {
           await TrxMahasiswaFinal.create({
             id_ref_beasiswa: p.id_ref_beasiswa,
@@ -461,13 +458,34 @@ exports.kirimKeFlow14 = async (req, res) => {
             id_prodi: p.id_prodi_final,
             prodi: p.prodi_final,
             jenjang: jenjang_diterima, 
-            tahun_angkatan: tahunAngkatan
+            tahun_angkatan: tahunAngkatan,
+            tinggal_kode_prov: p.tinggal_kode_prov,
+            tinggal_prov: p.tinggal_prov,
+            tinggal_kode_kab: p.tinggal_kode_kab,
+            tinggal_kab_kota: p.tinggal_kab_kota,
+            email: p.email,
+            no_hp: p.no_hp
           });
-        } else if (!existing.jenjang || existing.jenjang === "-") {
-          await TrxMahasiswaFinal.update(
-            { jenjang: jenjang_diterima },
-            { where: { id: existing.id } }
-          );
+        } else {
+          const updateData = {};
+          
+          if (!existing.jenjang || existing.jenjang === "-") {
+            updateData.jenjang = jenjang_diterima;
+          }
+          
+          updateData.tinggal_kode_prov = p.tinggal_kode_prov;
+          updateData.tinggal_prov = p.tinggal_prov;
+          updateData.tinggal_kode_kab = p.tinggal_kode_kab;
+          updateData.tinggal_kab_kota = p.tinggal_kab_kota;
+          updateData.email = p.email;
+          updateData.no_hp = p.no_hp;
+
+          if (Object.keys(updateData).length > 0) {
+            await TrxMahasiswaFinal.update(
+              updateData,
+              { where: { id: existing.id } }
+            );
+          }
         }
       } catch (insertError) {
         console.error(`Gagal insert ke mahasiswa final (Pendaftar: ${p.kode_pendaftaran}):`, insertError.message);

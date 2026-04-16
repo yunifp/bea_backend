@@ -63,12 +63,12 @@ const {
   toggleLockSelektor,
   kembalikanKeAdminDitjenbun,
   downloadPendaftarZip,
-  downloadBulkZip
+  downloadBulkZip,
+  downloadRekapProvinsi
 } = require("../controller");
 const {
   uploadConfigs,
 } = require("../../../common/middleware/upload_middleware");
-
 
 router.get("/rekap-administrasi", getRekapLulusAdministrasi);
 router.get("/rekap-administrasi/log", getLastLogKeputusan);
@@ -172,8 +172,9 @@ router.get(
 router.get("/pendaftar-penetapan/:beasiswaId", getPendaftarPenetapan);
 router.get("/detail-penetapan/:idTrxBeasiswa", getDetailPenetapan);
 router.get("/assignment/download", downloadPendaftarAssignment);
-router.get("/download-verifikasi-kabkota", downloadVerifikasiKabkota);
-router.get("/download-verifikasi-provinsi", downloadVerifikasiProvinsi);
+router.post("/download-verifikasi-kabkota", downloadVerifikasiKabkota);
+router.post("/download-verifikasi-provinsi", downloadVerifikasiProvinsi);
+router.get("/download-rekap-provinsi", downloadRekapProvinsi);
 
 router.get("/:idTrxBeasiswa/ba-kabkota", getBaKabkotaByProvinsi)
 router.post(

@@ -190,7 +190,8 @@ exports.downloadDataPenetapan = async (req, res) => {
 
 exports.getExternalMahasiswaFinal = async (req, res) => {
   try {
-    const { id_pt_final, id_jenjang, tahun } = req.query;
+    // PERBAIKAN 1: Tambahkan 'tahun_angkatan' pada destructuring req.query
+    const { id_pt_final, id_jenjang, tahun, tahun_angkatan } = req.query;
 
     const whereCondition = {};
 
@@ -220,8 +221,10 @@ exports.getExternalMahasiswaFinal = async (req, res) => {
       }
     }
     
-    if (tahun) {
-      whereCondition.tahun_angkatan = tahun;
+    // PERBAIKAN 2: Prioritaskan 'tahun_angkatan', jika kosong gunakan 'tahun'
+    const filterTahun = tahun_angkatan || tahun;
+    if (filterTahun) {
+      whereCondition.tahun_angkatan = filterTahun;
     }
 
     const rows = await TrxMahasiswaFinal.findAll({

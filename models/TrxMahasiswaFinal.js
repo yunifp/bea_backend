@@ -62,10 +62,34 @@ const TrxMahasiswaFinal = sequelize.define(
       type: DataTypes.STRING(4),
       allowNull: true,
     },
+    tinggal_kode_prov: {
+      type: DataTypes.STRING(10),
+      allowNull: true,
+    },
+    tinggal_prov: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    tinggal_kode_kab: {
+      type: DataTypes.STRING(10),
+      allowNull: true,
+    },
+    tinggal_kab_kota: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    email: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+    },
+    no_hp: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
   },
   {
     tableName: "trx_mahasiswa_final",
-    timestamps: true, // Karena di tabel Anda ada created_at dan updated_at
+    timestamps: true,
     createdAt: "created_at",
     updatedAt: "updated_at",
   }

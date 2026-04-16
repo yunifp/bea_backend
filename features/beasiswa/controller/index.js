@@ -4,7 +4,7 @@ const {
   errorResponse,
 } = require("../../../common/response");
 const axios = require("axios");
-const { Op, where, fn, col, literal } = require("sequelize");
+const { Op, where, fn, col, literal, DATE } = require("sequelize");
 const {
   TrxBeasiswa,
   TrxDokumenUmum,
@@ -447,7 +447,7 @@ exports.getTransaksiBeasiswaByPaginationSeleksiAdministrasi = async (
       id_ref_beasiswa: idBeasiswa,
       id_verifikator: req.user.id,
       id_flow: {
-        [Op.ne]: [{ id_flow: 0 }, { id_flow: 1 }],
+        [Op.notIn]: [0, 1],
       },
     };
 
@@ -750,7 +750,6 @@ exports.getFullDataBeasiswa = async (req, res) => {
     // Beasiswa
     // =========================
     const beasiswaData = trxBeasiswa.toJSON();
-    // console.log(beasiswaData);
 
     if (beasiswaData.foto) {
       beasiswaData.foto = getFileUrl(req, "foto", beasiswaData.foto);
@@ -1063,7 +1062,6 @@ exports.submitBeasiswa = async (req, res) => {
       updated_at: new Date(),
     };
 
-    // ✅ Update foto hanya jika file dikirim (tidak overwrite jika tidak ada)
     if (fotoFile) updateData.foto = fotoFile.filename;
     if (fotoDepanFile) updateData.foto_depan = fotoDepanFile.filename;
     if (fotoKiriFile) updateData.foto_samping_kiri = fotoKiriFile.filename;
@@ -1084,6 +1082,7 @@ exports.submitBeasiswa = async (req, res) => {
         updateData.id_flow = 1;
         updateData.is_active = 1;
         updateData.flow = "Draft";
+        updateData.created_at = new Date();
 
         if (!trxBeasiswa.kode_pendaftaran) {
           const kodePendaftaran = await generateKodePendaftaran(idJalur);
@@ -3373,6 +3372,8 @@ exports.assignVerifikatorByJumlah = async (req, res) => {
           id_verifikator: idVerifikator,
           verifikator_nama: verifikator_nama,
           updated_at: new Date(),
+          id_flow: 2,
+          flow: "Verifikasi",
         },
         {
           where: {
@@ -3744,6 +3745,13 @@ exports.downloadPendaftarAssignment = async (req, res) => {
         "id_trx_beasiswa",
         "nama_lengkap",
         "nik",
+        "nkk",
+        "no_hp",
+        "jenis_kelamin",
+        "tanggal_lahir",
+        "tempat_lahir",
+        "tahun_lulus",
+        "kondisi_buta_warna",
         "kode_pendaftaran",
         "jalur",
         "id_verifikator",
@@ -3802,9 +3810,17 @@ exports.downloadPendaftarAssignment = async (req, res) => {
     rows.forEach((row, index) => {
       worksheet.addRow({
         no: index + 1,
+        tanggal: row.created_at || "-",
         kode_pendaftaran: row.kode_pendaftaran || "-",
         nama_lengkap: row.nama_lengkap || "-",
         nik: row.nik || "-",
+        nkk: row.nkk || "-",
+        no_hp: row.no_hp || "-",
+        jenis_kelamin: row.jenis_kelamin || "-",
+        tanggal_lahir: row.tanggal_lahir || "-",
+        tempat_lahir: row.tempat_lahir || "-",
+        tahun_lulus: row.tahun_lulus || "-",
+        buta_warna: row.kondisi_buta_warna || "-",
         jalur: row.jalur || "-",
         prov: row.tinggal_prov || "-",
         kabkota: row.tinggal_kab_kota || "-",
@@ -3863,15 +3879,15 @@ const buildVerifikasiDaerahWhere = ({ idBeasiswa, kodeProvinsi, kodeKabkota, din
     baseCondition.kode_dinas_provinsi = kodeProvinsi;
   }
 
-  if (dinas === "kabkota") {
-    baseCondition.id_flow = 6;
-  } else if (dinas === "provinsi") {
-    baseCondition.id_flow = 7;
-  }
+  // if (dinas === "kabkota") {
+  //   baseCondition.id_flow = 6;
+  // } else if (dinas === "provinsi") {
+  //   baseCondition.id_flow = 7;
+  // }
 
-  if (idFlow) {
-    baseCondition.id_flow = Number(idFlow);
-  }
+  // if (idFlow) {
+  //   baseCondition.id_flow = Number(idFlow);
+  // }
 
   if (idJalur) {
     baseCondition.id_jalur = Number(idJalur);
@@ -3980,113 +3996,658 @@ const generateExcelVerifikasiDaerah = async (res, rows, filename) => {
   res.status(200).end();
 };
 
-// ─── Download verifikasi kabkota ──────────────────────────────────────────────
+// exports.downloadVerifikasiKabkota = async (req, res) => {
+//   try {
+//     const {
+//       idBeasiswa,
+//       kodeProvinsi,
+//       kodeKabkota,
+//       search = "",
+//       idFlow,
+//       idJalur,
+//       statusLulus,
+//     } = req.query;
+
+//     const whereCondition = buildVerifikasiDaerahWhere({
+//       idBeasiswa,
+//       kodeProvinsi,
+//       kodeKabkota,
+//       dinas: "kabkota",
+//       search,
+//       idFlow,
+//       idJalur,
+//       statusLulus,
+//     });
+
+//     const rows = await TrxBeasiswa.findAll({
+//       where: whereCondition,
+//       attributes: [
+//         "id_trx_beasiswa",
+//         "kode_pendaftaran",
+//         "nama_lengkap",
+//         "nik",
+//         "jalur",
+//         "id_flow",
+//         "flow",
+//         "tinggal_prov",
+//         "tinggal_kab_kota",
+//         "nama_dinas_kabkota",
+//         "nama_dinas_provinsi",
+//         "created_at",
+//       ],
+//       order: [["id_trx_beasiswa", "ASC"]],
+//     });
+
+//     await generateExcelVerifikasiDaerah(
+//       res,
+//       rows,
+//       `verifikasi_kabkota_${kodeKabkota || "semua"}`,
+//     );
+//   } catch (error) {
+//     console.error("Error downloadVerifikasiKabkota:", error);
+//     return errorResponse(res, "Gagal mengunduh file Excel");
+//   }
+// };
+
+// exports.downloadVerifikasiProvinsi = async (req, res) => {
+//   try {
+//     const {
+//       idBeasiswa,
+//       kodeProvinsi,
+//       kodeKabkota, // opsional, jika provinsi ingin filter per kabkota
+//       search = "",
+//       idFlow,
+//       idJalur,
+//       statusLulus,
+//     } = req.query;
+
+//     const whereCondition = buildVerifikasiDaerahWhere({
+//       idBeasiswa,
+//       kodeProvinsi,
+//       kodeKabkota,
+//       dinas: "provinsi",
+//       search,
+//       idFlow,
+//       idJalur,
+//       statusLulus,
+//     });
+
+//     const rows = await TrxBeasiswa.findAll({
+//       where: whereCondition,
+//       attributes: [
+//         "id_trx_beasiswa",
+//         "kode_pendaftaran",
+//         "nama_lengkap",
+//         "nik",
+//         "jalur",
+//         "id_flow",
+//         "flow",
+//         "tinggal_prov",
+//         "tinggal_kab_kota",
+//         "nama_dinas_kabkota",
+//         "nama_dinas_provinsi",
+//         "created_at",
+//       ],
+//       order: [
+//         ["kode_dinas_kabkota", "ASC"],
+//         ["id_trx_beasiswa", "ASC"],
+//       ],
+//     });
+
+//     await generateExcelVerifikasiDaerah(
+//       res,
+//       rows,
+//       `verifikasi_provinsi_${kodeProvinsi || "semua"}`,
+//     );
+//   } catch (error) {
+//     console.error("Error downloadVerifikasiProvinsi:", error);
+//     return errorResponse(res, "Gagal mengunduh file Excel");
+//   }
+// };
+
 exports.downloadVerifikasiKabkota = async (req, res) => {
   try {
     const {
-      idBeasiswa,
-      kodeProvinsi,
-      kodeKabkota,
-      search = "",
-      idFlow,
-      idJalur,
-      statusLulus,
-    } = req.query;
+      idBeasiswa, kodeProvinsi, kodeKabkota,
+      search = "", idFlow, idJalur, statusLulus,
+      refDokumenUmum = [], refDokumenKhusus = [],
+    } = req.body;
 
     const whereCondition = buildVerifikasiDaerahWhere({
-      idBeasiswa,
-      kodeProvinsi,
-      kodeKabkota,
-      dinas: "kabkota",
-      search,
-      idFlow,
-      idJalur,
-      statusLulus,
+      idBeasiswa, kodeProvinsi, kodeKabkota,
+      dinas: "kabkota", search, idFlow, idJalur, statusLulus,
     });
 
     const rows = await TrxBeasiswa.findAll({
       where: whereCondition,
       attributes: [
-        "id_trx_beasiswa",
-        "kode_pendaftaran",
-        "nama_lengkap",
-        "nik",
-        "jalur",
-        "id_flow",
-        "flow",
-        "tinggal_prov",
-        "tinggal_kab_kota",
-        "nama_dinas_kabkota",
-        "nama_dinas_provinsi",
-        "created_at",
+        "id_trx_beasiswa", "kode_pendaftaran", "nama_lengkap",
+        "nik", "nkk", "no_hp", "jalur", "id_flow", "verifikator_nama",
       ],
       order: [["id_trx_beasiswa", "ASC"]],
     });
 
-    await generateExcelVerifikasiDaerah(
-      res,
-      rows,
-      `verifikasi_kabkota_${kodeKabkota || "semua"}`,
-    );
+    const idTrxList = rows.map((r) => r.id_trx_beasiswa);
+
+    const trxDokumenUmum = await TrxDokumenUmum.findAll({
+      where: { id_trx_beasiswa: { [Op.in]: idTrxList } },
+      attributes: ["id_trx_beasiswa", "id_ref_dokumen", "verifikator_dinas_is_valid", "status_verifikasi"],
+    });
+
+    const trxDokumenKhusus = await TrxDokumenKhusus.findAll({
+      where: { id_trx_beasiswa: { [Op.in]: idTrxList } },
+      attributes: ["id_trx_beasiswa", "id_ref_dokumen", "verifikasi_kabkota_is_valid", "status_verifikasi"],
+    });
+
+    const umumMap = {};
+    trxDokumenUmum.forEach((d) => {
+      if (!umumMap[d.id_trx_beasiswa]) umumMap[d.id_trx_beasiswa] = {};
+      umumMap[d.id_trx_beasiswa][d.id_ref_dokumen] =
+        d.verifikator_dinas_is_valid === "Y" ? "Sesuai"
+          : d.verifikator_dinas_is_valid === "N" ? "Tidak Sesuai"
+            : d.status_verifikasi || "-";
+    });
+
+    const khususMap = {};
+    trxDokumenKhusus.forEach((d) => {
+      if (!khususMap[d.id_trx_beasiswa]) khususMap[d.id_trx_beasiswa] = {};
+      khususMap[d.id_trx_beasiswa][d.id_ref_dokumen] =
+        d.verifikasi_kabkota_is_valid || d.status_verifikasi || "-";
+    });
+
+    // ─── Warna & style ────────────────────────────────────────────────────
+    const COLOR = {
+      headerFixed: "FF1F4E79",
+      headerDokUmum: "FF2E75B6",
+      headerDokKhus: "FF2F5597",
+      headerRight: "FF833C00",
+      rowEven: "FFD6E4F0",
+      rowOdd: "FFFFFFFF",
+      borderColor: "FFB8CCE4",
+    };
+
+    const borderStyle = {
+      top: { style: "thin", color: { argb: COLOR.borderColor } },
+      left: { style: "thin", color: { argb: COLOR.borderColor } },
+      bottom: { style: "thin", color: { argb: COLOR.borderColor } },
+      right: { style: "thin", color: { argb: COLOR.borderColor } },
+    };
+
+    const makeHeaderCell = (ws, rowNum, colNum, value, bgColor) => {
+      const cell = ws.getCell(rowNum, colNum);
+      cell.value = value;
+      cell.font = { bold: true, color: { argb: "FFFFFFFF" }, name: "Arial", size: 10 };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: bgColor } };
+      cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+      cell.border = borderStyle;
+      return cell;
+    };
+
+    // ─── Build Excel ──────────────────────────────────────────────────────
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Verifikasi Kabkota");
+
+    worksheet.properties.defaultRowHeight = 20;
+
+    const fixedHeaders = ["No", "ID Pendaftar", "Nama Lengkap", "NIK", "Nomor KK", "No Handphone"];
+    const umumHeaders = refDokumenUmum.map((d) => d.persyaratan);
+    const khususHeaders = refDokumenKhusus.map((d) => d.persyaratan);
+    const rightHeaders = ["Catatan Hasil Verifikasi *)", "Nama Verifikator"];
+
+    const totalFixed = fixedHeaders.length;
+    const totalUmum = umumHeaders.length;
+    const totalKhusus = khususHeaders.length;
+
+    const colDokStart = totalFixed + 1;
+    const colUmumEnd = totalFixed + totalUmum;
+    const colKhusStart = colUmumEnd + 1;
+    const colKhusEnd = totalFixed + totalUmum + totalKhusus;
+    const colRightStart = colKhusEnd + 1;
+
+    // ── 1. Kolom tetap: merge row 1-2, style di row 1 ────────────────────
+    fixedHeaders.forEach((h, i) => {
+      worksheet.mergeCells(1, i + 1, 2, i + 1);
+      makeHeaderCell(worksheet, 1, i + 1, h, COLOR.headerFixed);
+    });
+
+    // ── 2. Grup Dokumen Umum: merge row 1, style row 1 & tiap sub-kolom row 2
+    if (totalUmum > 0) {
+      if (totalUmum > 1) worksheet.mergeCells(1, colDokStart, 1, colUmumEnd);
+      makeHeaderCell(worksheet, 1, colDokStart, "Dokumen Persyaratan Umum", COLOR.headerDokUmum);
+      umumHeaders.forEach((h, i) =>
+        makeHeaderCell(worksheet, 2, colDokStart + i, h, COLOR.headerDokUmum)
+      );
+    }
+
+    // ── 3. Grup Dokumen Khusus: merge row 1, style row 1 & tiap sub-kolom row 2
+    if (totalKhusus > 0) {
+      if (totalKhusus > 1) worksheet.mergeCells(1, colKhusStart, 1, colKhusEnd);
+      makeHeaderCell(worksheet, 1, colKhusStart, "Dokumen Persyaratan Khusus", COLOR.headerDokKhus);
+      khususHeaders.forEach((h, i) =>
+        makeHeaderCell(worksheet, 2, colKhusStart + i, h, COLOR.headerDokKhus)
+      );
+    }
+
+    // ── 4. Kolom kanan: merge row 1-2, style di row 1 ────────────────────
+    rightHeaders.forEach((h, i) => {
+      worksheet.mergeCells(1, colRightStart + i, 2, colRightStart + i);
+      makeHeaderCell(worksheet, 1, colRightStart + i, h, COLOR.headerRight);
+    });
+
+    worksheet.getRow(1).height = 28;
+    worksheet.getRow(2).height = 60;
+
+    // ── Lebar kolom ────────────────────────────────────────────────────────
+    const colWidths = [
+      5, 18, 28, 18, 18, 16, 8,
+      ...umumHeaders.map(() => 22),
+      ...khususHeaders.map(() => 22),
+      35, 22,
+    ];
+    colWidths.forEach((w, i) => { worksheet.getColumn(i + 1).width = w; });
+
+    // ── Data rows ──────────────────────────────────────────────────────────
+    rows.forEach((row, index) => {
+      const trxId = row.id_trx_beasiswa;
+      const isEven = index % 2 === 1;
+      const rowFill = { type: "pattern", pattern: "solid", fgColor: { argb: isEven ? COLOR.rowEven : COLOR.rowOdd } };
+
+      const excelRow = worksheet.addRow([
+        index + 1,
+        row.kode_pendaftaran || "-",
+        row.nama_lengkap || "-",
+        row.nik || "-",
+        row.nkk || "-",
+        row.no_hp || "-",
+        ...refDokumenUmum.map((d) => umumMap[trxId]?.[d.id] || "-"),
+        ...refDokumenKhusus.map((d) => khususMap[trxId]?.[d.id] || "-"),
+        row.verifikator_catatan || "-",
+        row.verifikator_nama || "-", ,
+      ]);
+
+      excelRow.height = 18;
+      excelRow.eachCell((cell, colNumber) => {
+        cell.fill = rowFill;
+        cell.border = borderStyle;
+        cell.font = { name: "Arial", size: 10 };
+        cell.alignment = {
+          horizontal: colNumber === 3 ? "left" : "center",
+          vertical: "middle",
+          wrapText: false,
+        };
+      });
+    });
+
+    // ── Freeze pane ────────────────────────────────────────────────────────
+    worksheet.views = [{ state: "frozen", xSplit: totalFixed, ySplit: 2 }];
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename=verifikasi_kabkota_${kodeKabkota || "semua"}.xlsx`);
+    await workbook.xlsx.write(res);
+    res.status(200).end();
+
   } catch (error) {
     console.error("Error downloadVerifikasiKabkota:", error);
     return errorResponse(res, "Gagal mengunduh file Excel");
   }
 };
 
-// ─── Download verifikasi provinsi ─────────────────────────────────────────────
 exports.downloadVerifikasiProvinsi = async (req, res) => {
   try {
     const {
-      idBeasiswa,
-      kodeProvinsi,
-      kodeKabkota, // opsional, jika provinsi ingin filter per kabkota
-      search = "",
-      idFlow,
-      idJalur,
-      statusLulus,
-    } = req.query;
+      idBeasiswa, kodeProvinsi, kodeKabkota,
+      search = "", idFlow, idJalur, statusLulus,
+      refDokumenUmum = [], refDokumenKhusus = [],
+    } = req.body; // ✅ ubah dari GET params → POST body (sama seperti kabkota)
 
     const whereCondition = buildVerifikasiDaerahWhere({
-      idBeasiswa,
-      kodeProvinsi,
-      kodeKabkota,
-      dinas: "provinsi",
-      search,
-      idFlow,
-      idJalur,
-      statusLulus,
+      idBeasiswa, kodeProvinsi, kodeKabkota,
+      dinas: "provinsi", search, idFlow, idJalur, statusLulus,
     });
 
     const rows = await TrxBeasiswa.findAll({
       where: whereCondition,
       attributes: [
+        "id_trx_beasiswa", "kode_pendaftaran", "nama_lengkap",
+        "nik", "nkk", "no_hp", "jalur",        // jalur = Kategori Pendaftar
+        "tinggal_kab_kota",                        // nama kabupaten
+        "id_flow", "verifikator_nama",
+      ],
+      order: [["kode_dinas_kabkota", "ASC"], ["id_trx_beasiswa", "ASC"]],
+    });
+
+    const idTrxList = rows.map((r) => r.id_trx_beasiswa);
+
+    const trxDokumenUmum = await TrxDokumenUmum.findAll({
+      where: { id_trx_beasiswa: { [Op.in]: idTrxList } },
+      attributes: ["id_trx_beasiswa", "id_ref_dokumen", "is_verifed_dinas", "status_verifikasi"],
+    });
+
+    const trxDokumenKhusus = await TrxDokumenKhusus.findAll({
+      where: { id_trx_beasiswa: { [Op.in]: idTrxList } },
+      attributes: ["id_trx_beasiswa", "id_ref_dokumen", "verifikasi_prov_is_valid", "status_verifikasi"],
+    });
+
+    const umumMap = {};
+    trxDokumenUmum.forEach((d) => {
+      if (!umumMap[d.id_trx_beasiswa]) umumMap[d.id_trx_beasiswa] = {};
+      umumMap[d.id_trx_beasiswa][d.id_ref_dokumen] =
+        d.is_verifed_dinas || d.status_verifikasi || "-";
+    });
+
+    const khususMap = {};
+    trxDokumenKhusus.forEach((d) => {
+      if (!khususMap[d.id_trx_beasiswa]) khususMap[d.id_trx_beasiswa] = {};
+      khususMap[d.id_trx_beasiswa][d.id_ref_dokumen] =
+        d.verifikasi_prov_is_valid || d.status_verifikasi || "-";
+    });
+
+    // ─── Warna & style ────────────────────────────────────────────────────
+    const COLOR = {
+      headerFixed: "FF1F4E79",
+      headerKabkota: "FF1F4E79", // sama dengan fixed
+      headerDokUmum: "FF2E75B6",
+      headerDokKhus: "FF2F5597",
+      headerRight: "FF833C00",
+      rowEven: "FFD6E4F0",
+      rowOdd: "FFFFFFFF",
+      borderColor: "FFB8CCE4",
+    };
+
+    const borderStyle = {
+      top: { style: "thin", color: { argb: COLOR.borderColor } },
+      left: { style: "thin", color: { argb: COLOR.borderColor } },
+      bottom: { style: "thin", color: { argb: COLOR.borderColor } },
+      right: { style: "thin", color: { argb: COLOR.borderColor } },
+    };
+
+    const makeHeaderCell = (ws, rowNum, colNum, value, bgColor) => {
+      const cell = ws.getCell(rowNum, colNum);
+      cell.value = value;
+      cell.font = { bold: true, color: { argb: "FFFFFFFF" }, name: "Arial", size: 10 };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: bgColor } };
+      cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+      cell.border = borderStyle;
+      return cell;
+    };
+
+    // ─── Build Excel ──────────────────────────────────────────────────────
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Verifikasi Provinsi");
+    worksheet.properties.defaultRowHeight = 20;
+
+    // Kolom tetap: No, ID Pendaftar, Nama, NIK, Nomor KK, No HP, Kabupaten, Kategori Pendaftar
+    const fixedHeaders = ["No", "ID Pendaftar", "Nama Lengkap", "NIK", "Nomor KK", "No Handphone", "Kabupaten", "Kategori Pendaftar : *)"];
+    const umumHeaders = refDokumenUmum.map((d) => d.persyaratan);
+    const khususHeaders = refDokumenKhusus.map((d) => d.persyaratan);
+    const rightHeaders = ["Catatan Hasil Verifikasi **)", "Nama Verifikator"];
+
+    const totalFixed = fixedHeaders.length;   // 8
+    const totalUmum = umumHeaders.length;
+    const totalKhusus = khususHeaders.length;
+
+    const colUmumStart = totalFixed + 1;
+    const colUmumEnd = totalFixed + totalUmum;
+    const colKhusStart = colUmumEnd + 1;
+    const colKhusEnd = totalFixed + totalUmum + totalKhusus;
+    const colRightStart = colKhusEnd + 1;
+
+    // ── Row 1: header grup (3 baris header total) ─────────────────────────
+    // Baris 1 = grup dokumen
+    // Baris 2 = sub-grup (Pendidikan Menengah / Tinggi) — OPSIONAL, lihat catatan
+    // Baris 3 = nama dokumen
+    //
+    // Karena di foto hanya 2 baris header + data, kita pakai 2 baris:
+    // Baris 1 = grup (fixed merge 1-2, dok umum, dok khusus, right merge 1-2)
+    // Baris 2 = nama dokumen masing-masing
+
+    // ── Kolom tetap: merge row 1-2 ────────────────────────────────────────
+    fixedHeaders.forEach((h, i) => {
+      worksheet.mergeCells(1, i + 1, 2, i + 1);
+      makeHeaderCell(worksheet, 1, i + 1, h, COLOR.headerFixed);
+    });
+
+    // ── Dokumen Umum: grup row 1, nama dokumen row 2 ──────────────────────
+    if (totalUmum > 0) {
+      worksheet.mergeCells(1, colUmumStart, 1, colUmumEnd);
+      makeHeaderCell(worksheet, 1, colUmumStart, "Jika berasal dari pendidikan menengah", COLOR.headerDokUmum);
+      umumHeaders.forEach((h, i) =>
+        makeHeaderCell(worksheet, 2, colUmumStart + i, h, COLOR.headerDokUmum)
+      );
+    }
+
+    // ── Dokumen Khusus: grup row 1, nama dokumen row 2 ───────────────────
+    if (totalKhusus > 0) {
+      worksheet.mergeCells(1, colKhusStart, 1, colKhusEnd);
+      makeHeaderCell(worksheet, 1, colKhusStart, "Jika berasal dari pendidikan tinggi", COLOR.headerDokKhus);
+      khususHeaders.forEach((h, i) =>
+        makeHeaderCell(worksheet, 2, colKhusStart + i, h, COLOR.headerDokKhus)
+      );
+    }
+
+    // ── Kolom kanan: merge row 1-2 ────────────────────────────────────────
+    rightHeaders.forEach((h, i) => {
+      worksheet.mergeCells(1, colRightStart + i, 2, colRightStart + i);
+      makeHeaderCell(worksheet, 1, colRightStart + i, h, COLOR.headerRight);
+    });
+
+    worksheet.getRow(1).height = 40; // lebih tinggi karena teks grup panjang
+    worksheet.getRow(2).height = 60;
+
+    // ── Lebar kolom ───────────────────────────────────────────────────────
+    const colWidths = [
+      5,   // No
+      18,  // ID Pendaftar
+      28,  // Nama Lengkap
+      18,  // NIK
+      18,  // Nomor KK
+      16,  // No Handphone
+      20,  // Kabupaten  ← tambahan
+      30,  // Kategori Pendaftar ← tambahan
+      ...umumHeaders.map(() => 22),
+      ...khususHeaders.map(() => 22),
+      35,  // Catatan
+      22,  // Nama Verifikator
+    ];
+    colWidths.forEach((w, i) => { worksheet.getColumn(i + 1).width = w; });
+
+    // ── Data rows ─────────────────────────────────────────────────────────
+    rows.forEach((row, index) => {
+      const trxId = row.id_trx_beasiswa;
+      const isEven = index % 2 === 1;
+      const rowFill = {
+        type: "pattern", pattern: "solid",
+        fgColor: { argb: isEven ? COLOR.rowEven : COLOR.rowOdd },
+      };
+
+      const excelRow = worksheet.addRow([
+        index + 1,
+        row.kode_pendaftaran || "-",
+        row.nama_lengkap || "-",
+        row.nik || "-",
+        row.nkk || "-",  // ✅ bukan row.nkk
+        row.no_hp || "-",
+        row.tinggal_kab_kota || "-",  // Kabupaten
+        row.jalur || "-",  // Kategori Pendaftar
+        ...refDokumenUmum.map((d) => umumMap[trxId]?.[d.id] || "-"),
+        ...refDokumenKhusus.map((d) => khususMap[trxId]?.[d.id] || "-"),
+        "",                              // Catatan (kosong, diisi manual)
+        row.verifikator_nama || "-",
+      ]);
+
+      excelRow.height = 18;
+      excelRow.eachCell((cell, colNumber) => {
+        cell.fill = rowFill;
+        cell.border = borderStyle;
+        cell.font = { name: "Arial", size: 10 };
+        cell.alignment = {
+          horizontal: colNumber === 3 ? "left" : "center",
+          vertical: "middle",
+          wrapText: false,
+        };
+      });
+    });
+
+    // ── Freeze pane ───────────────────────────────────────────────────────
+    worksheet.views = [{ state: "frozen", xSplit: totalFixed, ySplit: 2 }];
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename=verifikasi_provinsi_${kodeProvinsi || "semua"}.xlsx`);
+    await workbook.xlsx.write(res);
+    res.status(200).end();
+
+  } catch (error) {
+    console.error("Error downloadVerifikasiProvinsi:", error);
+    return errorResponse(res, "Gagal mengunduh file Excel");
+  }
+};
+
+exports.downloadRekapProvinsi = async (req, res) => {
+  try {
+    const { idBeasiswa, kodeProvinsi } = req.query;
+
+    if (!kodeProvinsi) {
+      return failResponse(res, "kodeProvinsi wajib diisi");
+    }
+
+    const rows = await TrxBeasiswa.findAll({
+      where: {
+        id_ref_beasiswa: idBeasiswa,
+        kode_dinas_provinsi: kodeProvinsi,
+      },
+      attributes: [
         "id_trx_beasiswa",
         "kode_pendaftaran",
         "nama_lengkap",
         "nik",
+        "no_hp",
+        "email",
+        "jenis_kelamin",
+        "tanggal_lahir",
+        "tempat_lahir",
         "jalur",
         "id_flow",
         "flow",
+        "kode_dinas_kabkota",
+        "nama_dinas_kabkota",
+        "kode_dinas_provinsi",
+        "nama_dinas_provinsi",
         "tinggal_prov",
         "tinggal_kab_kota",
-        "nama_dinas_kabkota",
-        "nama_dinas_provinsi",
         "created_at",
       ],
       order: [
         ["kode_dinas_kabkota", "ASC"],
-        ["id_trx_beasiswa", "ASC"],
+        ["nama_lengkap", "ASC"],
       ],
     });
 
-    await generateExcelVerifikasiDaerah(
-      res,
-      rows,
-      `verifikasi_provinsi_${kodeProvinsi || "semua"}`,
+    const ADMIN_LULUS_FLOWS = [6, 7, 9, 10, 11, 12, 13, 17];
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Rekap Provinsi");
+
+    worksheet.getRow(1).values = [
+      "No",
+      "Kabupaten/Kota Dinas",
+      "Kode Pendaftaran",
+      "Nama Lengkap",
+      "NIK",
+      "No HP",
+      "Email",
+      "Jenis Kelamin",
+      "Tanggal Lahir",
+      "Tempat Lahir",
+      "Jalur",
+      "Status Flow",
+      "Lulus Administrasi",
+      "Tanggal Daftar",
+    ];
+
+    worksheet.columns = [
+      { key: "no", width: 6 },
+      { key: "nama_dinas_kabkota", width: 30 },
+      { key: "kode_pendaftaran", width: 22 },
+      { key: "nama_lengkap", width: 30 },
+      { key: "nik", width: 20 },
+      { key: "no_hp", width: 18 },
+      { key: "email", width: 30 },
+      { key: "jenis_kelamin", width: 15 },
+      { key: "tanggal_lahir", width: 18 },
+      { key: "tempat_lahir", width: 22 },
+      { key: "jalur", width: 20 },
+      { key: "flow", width: 30 },
+      { key: "lulus_administrasi", width: 20 },
+      { key: "tanggal_daftar", width: 20 },
+    ];
+
+    // Group per kabkota untuk zebra striping
+    let currentKabkota = null;
+    let fillColor = "FFFFFFFF";
+    let no = 1;
+
+    for (const row of rows) {
+      if (row.kode_dinas_kabkota !== currentKabkota) {
+        currentKabkota = row.kode_dinas_kabkota;
+        fillColor = fillColor === "FFFFFFFF" ? "FFF0F7FF" : "FFFFFFFF";
+      }
+
+      const isLulus = ADMIN_LULUS_FLOWS.includes(row.id_flow);
+      const excelRow = worksheet.addRow({
+        no: no++,
+        nama_dinas_kabkota: row.nama_dinas_kabkota || "-",
+        kode_pendaftaran: row.kode_pendaftaran || "-",
+        nama_lengkap: row.nama_lengkap || "-",
+        nik: row.nik || "-",
+        no_hp: row.no_hp || "-",
+        email: row.email || "-",
+        jenis_kelamin: row.jenis_kelamin || "-",
+        tanggal_lahir: row.tanggal_lahir || "-",
+        tempat_lahir: row.tempat_lahir || "-",
+        jalur: row.jalur || "-",
+        flow: row.flow || "-",
+        lulus_administrasi: isLulus ? "Lulus" : "Tidak Lulus",
+        tanggal_daftar: row.created_at
+          ? new Date(row.created_at).toLocaleDateString("id-ID")
+          : "-",
+      });
+
+      // Zebra striping per grup kabkota
+      excelRow.eachCell((cell) => {
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: fillColor },
+        };
+      });
+    }
+
+    // Styling header
+    worksheet.getRow(1).eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FF2E7D32" },
+      };
+    });
+
+    worksheet.getRow(1).height = 20;
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=rekap_provinsi_${kodeProvinsi}.xlsx`,
+    );
+
+    await workbook.xlsx.write(res);
+    res.status(200).end();
   } catch (error) {
-    console.error("Error downloadVerifikasiProvinsi:", error);
+    console.error("Error downloadRekapProvinsi:", error);
     return errorResponse(res, "Gagal mengunduh file Excel");
   }
 };

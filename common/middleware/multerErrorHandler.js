@@ -5,7 +5,7 @@ const multerErrorHandler = (err, req, res, next) => {
     if (err.code === "LIMIT_FILE_SIZE") {
       return res.status(400).json({
         status: "error",
-        message: "Ukuran file terlalu besar (maksimal 5MB)",
+        message: "Ukuran file terlalu besar (maksimal 10MB)",
       });
     }
 
