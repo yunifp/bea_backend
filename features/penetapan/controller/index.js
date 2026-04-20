@@ -23,7 +23,7 @@ exports.getListPenetapanMaster = async (req, res) => {
     const formattedData = rows.map((r, index) => ({
       no: index + 1,
       id_ref_beasiswa: r.id_ref_beasiswa || 0,
-      nama_penetapan: r.nama_beasiswa || "Penetapan Beasiswa 2025", 
+      nama_penetapan: r.nama_beasiswa || "Penetapan Beasiswa 2025",
       tanggal_penetapan: new Date().toISOString().split("T")[0], // Mockup Tanggal Hari Ini
       instansi: "Kementerian Pertanian", // Mockup Instansi (diabaikan jika di FE dihapus)
       jumlah_kuota: r.get("jumlah_penerima"),
@@ -68,7 +68,7 @@ exports.getDetailPenetapan = async (req, res) => {
     const { count, rows } = await TrxBeasiswa.findAndCountAll({
       where: whereCondition,
       attributes: [
-        "id_trx_beasiswa", "nama_lengkap", "kode_pendaftaran", 
+        "id_trx_beasiswa", "nama_lengkap", "kode_pendaftaran",
         "nama_kluster", "pt_final", "prodi_final", "urutan_ranking", "file_rekomendasi_teknis"
       ],
       limit,
@@ -97,9 +97,9 @@ exports.cekDokumenPenetapan = async (req, res) => {
       where: { id_flow: 14, file_rekomendasi_teknis: { [Op.ne]: null } },
       attributes: ["file_rekomendasi_teknis"]
     });
-    
-    return successResponse(res, "Status dokumen penetapan", { 
-      filename: data ? data.file_rekomendasi_teknis : null 
+
+    return successResponse(res, "Status dokumen penetapan", {
+      filename: data ? data.file_rekomendasi_teknis : null
     });
   } catch (error) {
     return errorResponse(res, "Gagal mengecek dokumen");
@@ -112,7 +112,7 @@ exports.cekDokumenPenetapan = async (req, res) => {
 exports.downloadDataPenetapan = async (req, res) => {
   try {
     const id_ref = req.query.id_ref || null;
-    
+
     const whereCondition = { id_flow: 14 };
     if (id_ref) whereCondition.id_ref_beasiswa = id_ref;
 
@@ -198,10 +198,10 @@ exports.getExternalMahasiswaFinal = async (req, res) => {
     if (id_pt_final) {
       whereCondition.id_pt = id_pt_final;
     }
-    
+
     if (id_jenjang) {
       let stringJenjang = "";
-      
+
       const id = parseInt(id_jenjang, 10);
       switch (id) {
         case 1: stringJenjang = "D1"; break;
@@ -211,16 +211,16 @@ exports.getExternalMahasiswaFinal = async (req, res) => {
         case 5: stringJenjang = "S1"; break;
         case 6: stringJenjang = "S2"; break;
         case 7: stringJenjang = "S3"; break;
-        default: stringJenjang = null; 
+        default: stringJenjang = null;
       }
 
       if (stringJenjang) {
-         whereCondition.jenjang = { [Op.like]: `%${stringJenjang}%` };
+        whereCondition.jenjang = { [Op.like]: `%${stringJenjang}%` };
       } else {
-         whereCondition.jenjang = "TIDAK_ADA_MAPPING_JENJANG_INI"; 
+        whereCondition.jenjang = "TIDAK_ADA_MAPPING_JENJANG_INI";
       }
     }
-    
+
     // PERBAIKAN 2: Prioritaskan 'tahun_angkatan', jika kosong gunakan 'tahun'
     const filterTahun = tahun_angkatan || tahun;
     if (filterTahun) {
@@ -230,7 +230,7 @@ exports.getExternalMahasiswaFinal = async (req, res) => {
     const rows = await TrxMahasiswaFinal.findAll({
       where: whereCondition,
       order: [["created_at", "DESC"]],
-      attributes: { exclude: [] } 
+      attributes: { exclude: [] }
     });
 
     return successResponse(res, "Data Mahasiswa Final berhasil ditarik", {

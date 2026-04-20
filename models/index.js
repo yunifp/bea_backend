@@ -16,6 +16,7 @@ const { sequelize } = require("../core/db_config");
 const RefProgramStudi = require("./RefProgramStudi");
 const EmailLog = require("./EmailLog");
 const TrxMahasiswaFinal = require("./TrxMahasiswaFinal");
+const TrxKoreksiPendaftar = require("./TrxKoreksiPendaftar");
 
 // Buat object models supaya gampang akses
 const models = {
@@ -37,7 +38,8 @@ const models = {
   TrxNilaiRapor,
   sequelize,
   EmailLog,
-  TrxMahasiswaFinal
+  TrxMahasiswaFinal,
+  TrxKoreksiPendaftar
 };
 
 // Relasi RoleMenu ↔ Menu

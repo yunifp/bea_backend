@@ -8,7 +8,8 @@ const {
   uploadFileSK,
   uploadFileSKProvinsi,
   uploadFileBA,
-  uploadFileBAProvinsi
+  uploadFileBAProvinsi,
+  deletePersyaratanKhususByTrx
 } = require("../controller");
 const {
   uploadConfigs,
@@ -48,6 +49,11 @@ router.post(
   "/upload-file-ba-provinsi/:idBeasiswa",
   uploadConfigs.berita_acara.single("file"),
   uploadFileBAProvinsi
+);
+
+router.delete(
+  "/delete-persyaratan-khusus/:idTrxBeasiswa",
+  deletePersyaratanKhususByTrx
 );
 
 module.exports = router;

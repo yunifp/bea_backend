@@ -449,3 +449,18 @@ exports.uploadFileBAProvinsi = async (req, res) => {
     return errorResponse(res, "Internal Server Error");
   }
 };
+
+exports.deletePersyaratanKhususByTrx = async (req, res) => {
+  try {
+    const { idTrxBeasiswa } = req.params;
+
+    await TrxDokumenKhusus.destroy({
+      where: { id_trx_beasiswa: idTrxBeasiswa },
+    });
+
+    return successResponse(res, "Dokumen khusus berhasil dihapus");
+  } catch (error) {
+    console.error(error);
+    return errorResponse(res, "Internal Server Error");
+  }
+};

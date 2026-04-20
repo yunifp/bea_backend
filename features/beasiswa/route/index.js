@@ -64,7 +64,9 @@ const {
   kembalikanKeAdminDitjenbun,
   downloadPendaftarZip,
   downloadBulkZip,
-  downloadRekapProvinsi
+  downloadRekapProvinsi,
+  getStatusVerifikasiKabkota,
+  getKoreksiPendaftar
 } = require("../controller");
 const {
   uploadConfigs,
@@ -189,5 +191,7 @@ router.patch("/:idTrxBeasiswa/kembalikan-ke-admin", kembalikanKeAdminDitjenbun);
 
 router.get("/download/pendaftar-zip/:idTrxBeasiswa", downloadPendaftarZip);
 router.post("/download/bulk-zip", downloadBulkZip);
+router.get("/:idBeasiswa/status-verifikasi-kabkota", getStatusVerifikasiKabkota);
+router.get("/:idTrxBeasiswa/koreksi", getKoreksiPendaftar);
 
 module.exports = router;
