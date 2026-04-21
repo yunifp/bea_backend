@@ -29,6 +29,7 @@ const archiver = require("archiver");
 const path = require("path");
 const fs = require("fs");
 const baseUploadDir = process.env.FILE_URL;
+const { sendNotificationToQueue } = require("../../../utils/notification");
 
 const FOLDER_MAP = {
   foto: "foto",
@@ -1221,53 +1222,32 @@ exports.submitBeasiswa = async (req, res) => {
 
     // 🚀 --- BLOK KIRIM EMAIL NOTIFIKASI JIKA BUKAN DRAFT --- 🚀
     if (!is_draftx && normalize(email)) {
-      try {
-        const transporter = nodemailer.createTransport({
-          host: process.env.SMTP_HOST,
-          port: process.env.SMTP_PORT,
-          secure: process.env.SMTP_SECURE === "true",
-          auth: {
-            user: process.env.SMTP_USER,
-            pass: process.env.SMTP_PASS,
-          },
-        });
+      const finalKodePendaftaran = updateData.kode_pendaftaran || trxBeasiswa.kode_pendaftaran || "Sedang Diproses";
 
-        const finalKodePendaftaran = updateData.kode_pendaftaran || trxBeasiswa.kode_pendaftaran || "Sedang Diproses";
+      const htmlContent = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+          <h2 style="color: #2e7d32; text-align: center;">Pendaftaran Berhasil Disubmit</h2>
+          <p>Halo <b>${normalize(nama_lengkap)}</b>,</p>
+          <p>Selamat! Data pendaftaran beasiswa Anda telah berhasil kami terima dan saat ini telah masuk ke tahap verifikasi.</p>
+          
+          <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin: 20px 0;">
+            <p style="margin: 5px 0;"><b>Kode Pendaftaran:</b> ${finalKodePendaftaran}</p>
+            <p style="margin: 5px 0;"><b>Jalur Pendaftaran:</b> ${normalize(namaJalur) || '-'}</p>
+          </div>
 
-        const mailOptions = {
-          from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_USER}>`,
-          to: normalize(email),
-          subject: "Pendaftaran Beasiswa Berhasil - Aplikasi Palma",
-          html: `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
-              <h2 style="color: #2e7d32; text-align: center;">Pendaftaran Berhasil Disubmit</h2>
-              <p>Halo <b>${normalize(nama_lengkap)}</b>,</p>
-              <p>Selamat! Data pendaftaran beasiswa Anda telah berhasil kami terima dan saat ini telah masuk ke tahap verifikasi.</p>
-              
-              <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin: 20px 0;">
-                <p style="margin: 5px 0;"><b>Kode Pendaftaran:</b> ${finalKodePendaftaran}</p>
-                <p style="margin: 5px 0;"><b>Jalur Pendaftaran:</b> ${normalize(namaJalur) || '-'}</p>
-              </div>
+          <p>Anda telah men-submit data pada beasiswa ini. Mohon tunggu proses seleksi.</p>
+          
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${process.env.BASE_URL || 'https://beasiswa.dev-palma.my.id'}" style="background-color: #2e7d32; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">Masuk ke Dashboard</a>
+          </div>
+          
+          <hr style="border: 0; border-top: 1px solid #eee; margin-top: 30px;" />
+          <p style="font-size: 12px; color: #888; text-align: center;">&copy; ${new Date().getFullYear()} Aplikasi Palma Beasiswa. All rights reserved.</p>
+        </div>
+      `;
 
-              <p>Anda telah men-submut data pada beasiswa ini. Mohon tunggu proses seleksi.</p>
-              
-              <div style="text-align: center; margin: 30px 0;">
-                <a href="${process.env.BASE_URL || 'https://beasiswa.dev-palma.my.id'}" style="background-color: #2e7d32; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">Masuk ke Dashboard</a>
-              </div>
-              
-              <hr style="border: 0; border-top: 1px solid #eee; margin-top: 30px;" />
-              <p style="font-size: 12px; color: #888; text-align: center;">&copy; ${new Date().getFullYear()} Aplikasi Palma Beasiswa. All rights reserved.</p>
-            </div>
-          `,
-        };
-
-        transporter.sendMail(mailOptions).catch(err => {
-          console.error("Gagal mengirim email notifikasi pendaftaran:", err);
-        });
-
-      } catch (err) {
-        console.error("Error setting up email:", err);
-      }
+      // Kirim ke antrean service notifikasi
+      sendNotificationToQueue("daftar", normalize(email), htmlContent);
     }
 
     return successResponse(res, "Transaksi berhasil diperbarui");
@@ -1398,70 +1378,39 @@ exports.updateFlowBeasiswa = async (req, res) => {
 
       // 🚀 --- BLOK KIRIM EMAIL NOTIFIKASI PENOLAKAN --- 🚀
       if (pendaftar && pendaftar.email) {
+        const htmlContent = `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+            <h2 style="color: #d32f2f; text-align: center;">Pemberitahuan Verifikasi Administrasi</h2>
+            <p>Halo <b>${pendaftar.nama_lengkap}</b>,</p>
+            <p>Terima kasih atas partisipasi Anda dalam pendaftaran Beasiswa. Setelah melakukan verifikasi dan penelaahan terhadap berkas pendaftaran Anda (Kode Pendaftaran: <b>${pendaftar.kode_pendaftaran || '-'}</b>), dengan berat hati kami sampaikan bahwa pendaftaran Anda <b>TIDAK LULUS</b> (Ditolak).</p>
+            
+            <div style="background-color: #fff3f3; border-left: 4px solid #d32f2f; padding: 15px; margin: 20px 0;">
+              <p style="margin: 0; color: #d32f2f; font-size: 14px;"><b>Alasan Penolakan / Catatan Verifikator:</b></p>
+              <p style="margin: 5px 0 0 0; color: #333;"><i>"${catatan || 'Tidak ada catatan tambahan.'}"</i></p>
+            </div>
+
+            <p>Jangan patah semangat dan teruslah berusaha. Terima kasih atas ketertarikan Anda pada program beasiswa kami.</p>
+            
+            <hr style="border: 0; border-top: 1px solid #eee; margin-top: 30px;" />
+            <p style="font-size: 12px; color: #888; text-align: center;">&copy; ${new Date().getFullYear()} Aplikasi Palma Beasiswa. All rights reserved.</p>
+          </div>
+        `;
+
+        // 1. Simpan log (opsional, sebagai riwayat di bea_backend)
         try {
-          const transporter = require("nodemailer").createTransport({
-            host: process.env.SMTP_HOST,
-            port: process.env.SMTP_PORT,
-            secure: process.env.SMTP_SECURE === "true",
-            auth: {
-              user: process.env.SMTP_USER,
-              pass: process.env.SMTP_PASS,
-            },
-          });
-
-          const mailOptions = {
-            from: `"${process.env.SMTP_FROM_NAME}" <${process.env.SMTP_USER}>`,
-            to: pendaftar.email,
+          await EmailLog.create({
+            id_trx: idTrxBeasiswa,
+            email_to: pendaftar.email,
             subject: "Pemberitahuan Hasil Verifikasi Administrasi - Aplikasi Palma",
-            html: `
-              <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
-                <h2 style="color: #d32f2f; text-align: center;">Pemberitahuan Verifikasi Administrasi</h2>
-                <p>Halo <b>${pendaftar.nama_lengkap}</b>,</p>
-                <p>Terima kasih atas partisipasi Anda dalam pendaftaran Beasiswa. Setelah melakukan verifikasi dan penelaahan terhadap berkas pendaftaran Anda (Kode Pendaftaran: <b>${pendaftar.kode_pendaftaran || '-'}</b>), dengan berat hati kami sampaikan bahwa pendaftaran Anda <b>TIDAK LULUS</b> (Ditolak).</p>
-                
-                <div style="background-color: #fff3f3; border-left: 4px solid #d32f2f; padding: 15px; margin: 20px 0;">
-                  <p style="margin: 0; color: #d32f2f; font-size: 14px;"><b>Alasan Penolakan / Catatan Verifikator:</b></p>
-                  <p style="margin: 5px 0 0 0; color: #333;"><i>"${catatan || 'Tidak ada catatan tambahan.'}"</i></p>
-                </div>
-
-                <p>Jangan patah semangat dan teruslah berusaha. Terima kasih atas ketertarikan Anda pada program beasiswa kami.</p>
-                
-                <hr style="border: 0; border-top: 1px solid #eee; margin-top: 30px;" />
-                <p style="font-size: 12px; color: #888; text-align: center;">&copy; ${new Date().getFullYear()} Aplikasi Palma Beasiswa. All rights reserved.</p>
-              </div>
-            `,
-          };
-
-          // 1. Simpan log email "pending" ke database Beasiswa
-          let emailLog;
-          try {
-            emailLog = await EmailLog.create({
-              id_trx: idTrxBeasiswa,
-              email_to: pendaftar.email,
-              subject: mailOptions.subject,
-              body_html: mailOptions.html,
-              status: "pending"
-            });
-          } catch (logErr) {
-            console.error("Gagal menyimpan log email penolakan:", logErr.message);
-          }
-
-          // 2. Kirim secara asinkron (Background process)
-          transporter.sendMail(mailOptions)
-            .then(async () => {
-              // Jika sukses terkirim, ubah status log jadi "sent"
-              if (emailLog) await emailLog.update({ status: "sent" });
-              console.log(`Email penolakan berhasil dikirim ke ${pendaftar.email}`);
-            })
-            .catch(async (err) => {
-              // Jika gagal, ubah status log jadi "failed"
-              console.error("Gagal mengirim email penolakan:", err);
-              if (emailLog) await emailLog.update({ status: "failed" });
-            });
-
-        } catch (err) {
-          console.error("Error setting up email untuk penolakan:", err);
+            body_html: htmlContent,
+            status: "queued" 
+          });
+        } catch (logErr) {
+          console.error("Gagal menyimpan log email penolakan:", logErr.message);
         }
+
+        // 2. Kirim ke antrean service notifikasi
+        sendNotificationToQueue("beasiswa-ditolak", pendaftar.email, htmlContent);
       }
       // ---------------------------------------------------------
 
