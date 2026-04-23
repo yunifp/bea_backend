@@ -1,10 +1,11 @@
 const { Op } = require("sequelize");
-const { TrxBeasiswa, User, TrxMahasiswaFinal } = require("../../../models");
+const { TrxBeasiswa, User, TrxMahasiswaFinal, sequelize } = require("../../../models");
 const RefProgramStudi = require("../../../models/RefProgramStudi");
 const RefPerguruanTinggi = require("../../../models/RefPerguruanTinggi");
 const { successResponse, errorResponse } = require("../../../common/response");
 const ExcelJS = require("exceljs");
 const jwt = require("jsonwebtoken");
+const { sequelizeMaster } = require("../../../core/db_master_config");
 
 const getUserContext = async (req) => {
   const authHeader = req.headers["authorization"];
@@ -63,12 +64,10 @@ const buildWhereCondition = async (req) => {
     }
   }
 
-  // Filter Perguruan Tinggi
   if (perguruan_tinggi) {
     whereCondition.pt_final = { [Op.like]: `%${perguruan_tinggi}%` };
   }
 
-  // Pencarian Teks
   if (search) {
     whereCondition[Op.or] = [
       { nama_lengkap: { [Op.like]: `%${search}%` } },
@@ -79,7 +78,6 @@ const buildWhereCondition = async (req) => {
     ];
   }
 
-  // Filter Jenjang Pendidikan dari RefProgramStudi
   if (jenjang) {
     const prodis = await RefProgramStudi.findAll({
       where: { jenjang },
@@ -127,7 +125,6 @@ exports.getPendaftarRekomtek = async (req, res) => {
         });
       }
 
-      // Prioritaskan nilai `jenjang_final` yang sudah disave, kalau belum ada ambil dari Master
       const jenjang_diterima = plainRow.jenjang_final || (prodiMaster ? prodiMaster.jenjang : "-");
 
       return {
@@ -258,14 +255,13 @@ exports.downloadDataRekomtek = async (req, res) => {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Data Rekomtek");
 
-    // ===== MENAMBAHKAN KOLOM BARU DI SINI =====
     worksheet.columns = [
       { header: "NO", key: "no", width: 6 },
       { header: "KODE PENDAFTARAN", key: "kode_pendaftaran", width: 25 },
       { header: "NAMA", key: "nama", width: 35 },
       { header: "NIK", key: "nik", width: 20 },
-      { header: "JENIS KELAMIN (L/P)", key: "jenis_kelamin", width: 20 }, // Tambahan Baru
-      { header: "NO HP", key: "no_hp", width: 20 }, // Tambahan Baru
+      { header: "JENIS KELAMIN (L/P)", key: "jenis_kelamin", width: 20 },
+      { header: "NO HP", key: "no_hp", width: 20 },
       { header: "NAMA IBU KANDUNG", key: "ibu_nama", width: 30 },
       { header: "TEMPAT LAHIR", key: "tempat_lahir", width: 20 },
       { header: "TANGGAL LAHIR", key: "tanggal_lahir", width: 15 },
@@ -273,7 +269,7 @@ exports.downloadDataRekomtek = async (req, res) => {
       { header: "ASAL SEKOLAH", key: "sekolah", width: 30 },
       { header: "JURUSAN SEKOLAH", key: "jurusan", width: 25 },
       { header: "TANGGAL LULUS SEKOLAH", key: "tahun_lulus", width: 25 },
-      { header: "LEMBAGA PENDIDIKAN", key: "lembaga_pendidikan", width: 45 }, // Tambahan Baru
+      { header: "LEMBAGA PENDIDIKAN", key: "lembaga_pendidikan", width: 45 },
       { header: "DESA/KELURAHAN", key: "tinggal_kel", width: 25 },
       { header: "KECAMATAN", key: "tinggal_kec", width: 25 },
       { header: "KABUPATEN/KOTA", key: "tinggal_kab_kota", width: 25 },
@@ -289,14 +285,13 @@ exports.downloadDataRekomtek = async (req, res) => {
         tglLahir = tglLahir.toISOString().split("T")[0];
       }
 
-      // ===== MAPPING DATA KE KOLOM =====
       worksheet.addRow({
         no: index + 1,
         kode_pendaftaran: row.kode_pendaftaran || "-",
         nama: row.nama_lengkap || "-",
         nik: row.nik || "-",
-        jenis_kelamin: row.jenis_kelamin || "-", // Data Jenis Kelamin
-        no_hp: row.no_hp || "-", // Data No HP
+        jenis_kelamin: row.jenis_kelamin || "-",
+        no_hp: row.no_hp || "-",
         ibu_nama: row.ibu_nama || "-",
         tempat_lahir: row.tempat_lahir || "-",
         tanggal_lahir: tglLahir || "-",
@@ -304,7 +299,7 @@ exports.downloadDataRekomtek = async (req, res) => {
         sekolah: row.sekolah || "-",
         jurusan: row.jurusan || "-",
         tahun_lulus: row.tahun_lulus || "-",
-        lembaga_pendidikan: row.pt_final || "-", // Data Lembaga Pendidikan (dari PT)
+        lembaga_pendidikan: row.pt_final || "-",
         tinggal_kel: row.tinggal_kel || "-",
         tinggal_kec: row.tinggal_kec || "-",
         tinggal_kab_kota: row.tinggal_kab_kota || "-",
@@ -315,7 +310,6 @@ exports.downloadDataRekomtek = async (req, res) => {
       });
     });
 
-    // Styling Header Excel
     worksheet.getRow(1).eachCell((cell) => {
       cell.font = { bold: true };
       cell.alignment = { horizontal: "center", vertical: "middle" };
@@ -391,47 +385,57 @@ exports.cekDokumenRekomtek = async (req, res) => {
 };
 
 exports.kirimKeFlow14 = async (req, res) => {
+  const transaction = await sequelize.transaction();
   try {
-    const whereCondition = { 
-      id_flow: 12,
-      status_undur_diri: {
-        [Op.or]: ["N", null] 
-      }
-    };
-    
+    const whereBase = { id_flow: 12 };
     const userCtx = await getUserContext(req);
+    
     if (userCtx && (userCtx.roles.includes(111) || userCtx.roles.includes(113))) {
       if (userCtx.nama_kampus) {
-        whereCondition.pt_final = { [Op.like]: `%${userCtx.nama_kampus}%` };
+        whereBase.pt_final = { [Op.like]: `%${userCtx.nama_kampus}%` };
       } else {
-        whereCondition.pt_final = "TIDAK_ADA_KAMPUS_DI_DATABASE";
+        await transaction.rollback();
+        return errorResponse(res, "TIDAK_ADA_KAMPUS_DI_DATABASE", 403);
       }
     }
 
-    const pendaftars = await TrxBeasiswa.findAll({ where: whereCondition, raw: true });
+    const pendaftarsAktif = await TrxBeasiswa.findAll({ 
+      where: { ...whereBase, status_undur_diri: { [Op.ne]: "Y" } }, 
+      raw: true,
+      transaction
+    });
 
-    if (pendaftars.length === 0) {
-      return errorResponse(res, "Tidak ada data yang bisa dikirim.", 400);
+    const pendaftarsMundur = await TrxBeasiswa.findAll({ 
+      where: { ...whereBase, status_undur_diri: "Y" }, 
+      raw: true,
+      transaction
+    });
+
+    if (pendaftarsAktif.length === 0 && pendaftarsMundur.length === 0) {
+      await transaction.rollback();
+      return errorResponse(res, "Tidak ada data yang bisa diproses.", 400);
     }
 
     const tahunAngkatan = new Date().getFullYear().toString();
 
-    for (const p of pendaftars) {
+    for (const p of pendaftarsAktif) {
       try {
         const existing = await TrxMahasiswaFinal.findOne({ 
-          where: { kode_pendaftaran: p.kode_pendaftaran } 
+          where: { kode_pendaftaran: p.kode_pendaftaran },
+          transaction
         });
         
         let jenjang_diterima = p.jenjang_final;
         
         if (!jenjang_diterima) {
           if (p.id_prodi_final) {
-             const prodi = await RefProgramStudi.findByPk(p.id_prodi_final, { attributes: ["jenjang"] });
+             const prodi = await RefProgramStudi.findByPk(p.id_prodi_final, { attributes: ["jenjang"], transaction });
              if (prodi) jenjang_diterima = prodi.jenjang;
           } else if (p.prodi_final) {
              const prodi = await RefProgramStudi.findOne({ 
                where: { nama_prodi: { [Op.like]: `%${p.prodi_final.trim()}%` } },
-               attributes: ["jenjang"]
+               attributes: ["jenjang"],
+               transaction
              });
              if (prodi) jenjang_diterima = prodi.jenjang;
           }
@@ -441,7 +445,7 @@ exports.kirimKeFlow14 = async (req, res) => {
 
         await TrxBeasiswa.update(
           { jenjang_final: jenjang_diterima },
-          { where: { id_trx_beasiswa: p.id_trx_beasiswa } }
+          { where: { id_trx_beasiswa: p.id_trx_beasiswa }, transaction }
         );
 
         if (!existing) {
@@ -465,7 +469,7 @@ exports.kirimKeFlow14 = async (req, res) => {
             tinggal_kab_kota: p.tinggal_kab_kota,
             email: p.email,
             no_hp: p.no_hp
-          });
+          }, { transaction });
         } else {
           const updateData = {};
           
@@ -483,23 +487,50 @@ exports.kirimKeFlow14 = async (req, res) => {
           if (Object.keys(updateData).length > 0) {
             await TrxMahasiswaFinal.update(
               updateData,
-              { where: { id: existing.id } }
+              { where: { id: existing.id }, transaction }
             );
           }
         }
       } catch (insertError) {
-        console.error(`Gagal insert ke mahasiswa final (Pendaftar: ${p.kode_pendaftaran}):`, insertError.message);
+        console.error(insertError.message);
       }
     }
 
-    const [updatedCount] = await TrxBeasiswa.update(
-      { id_flow: 14 },
-      { where: whereCondition }
-    );
+    if (pendaftarsMundur.length > 0) {
+      for (const m of pendaftarsMundur) {
+        const [existingCekal] = await sequelizeMaster.query(
+          "SELECT nik FROM ref_nik_cekal WHERE nik = :nik LIMIT 1",
+          { replacements: { nik: m.nik } }
+        );
 
-    return successResponse(res, `Berhasil mengirim ${updatedCount} pendaftar ke penetapan, data berhasil disisipkan, dan jenjang telah diperbarui.`);
+        if (existingCekal.length === 0) {
+          await sequelizeMaster.query(
+            `INSERT INTO ref_nik_cekal (nik, nama, keterangan, created_at, updated_at) 
+             VALUES (:nik, :nama, :alasan, NOW(), NOW())`,
+            {
+              replacements: {
+                nik: m.nik,
+                nama: m.nama_lengkap,
+                alasan: `Mengundurkan diri pada tahap Rekomtek PT ${m.pt_final}`
+              }
+            }
+          );
+        }
+      }
+    }
+
+    if (pendaftarsAktif.length > 0) {
+      await TrxBeasiswa.update(
+        { id_flow: 14 },
+        { where: { ...whereBase, status_undur_diri: { [Op.ne]: "Y" } }, transaction }
+      );
+    }
+
+    await transaction.commit();
+    return successResponse(res, `Berhasil memproses penetapan. Ditetapkan: ${pendaftarsAktif.length}, Daftar Cekal: ${pendaftarsMundur.length}`);
   } catch (error) {
-    console.error("ERROR KIRIM KE FLOW 14:", error);
+    await transaction.rollback();
+    console.error(error);
     return errorResponse(res, "Terjadi Kesalahan: " + error.message, 500);
   }
 };

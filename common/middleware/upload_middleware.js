@@ -88,7 +88,7 @@ const uploadConfigs = {
       "image/png",
       "image/jpeg",
     ]),
-    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+    limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
   }),
 
   // Untuk berita_acara
@@ -131,31 +131,31 @@ const uploadConfigs = {
       "image/jpg",
       "image/webp",
     ]),
-    limits: { fileSize: 10 * 1024 * 1024 },
+    limits: { fileSize: 2 * 1024 * 1024 },
   }),
 
   foto_depan: multer({
     storage: createStorage("foto_depan"),
     fileFilter: createFileFilter(["image/jpeg", "image/png", "image/jpg", "image/webp"]),
-    limits: { fileSize: 10 * 1024 * 1024 },
+    limits: { fileSize: 2 * 1024 * 1024 },
   }),
 
   foto_samping_kiri: multer({
     storage: createStorage("foto_samping_kiri"),
     fileFilter: createFileFilter(["image/jpeg", "image/png", "image/jpg", "image/webp"]),
-    limits: { fileSize: 10 * 1024 * 1024 },
+    limits: { fileSize: 2 * 1024 * 1024 },
   }),
 
   foto_samping_kanan: multer({
     storage: createStorage("foto_samping_kanan"),
     fileFilter: createFileFilter(["image/jpeg", "image/png", "image/jpg", "image/webp"]),
-    limits: { fileSize: 10 * 1024 * 1024 },
+    limits: { fileSize: 2 * 1024 * 1024 },
   }),
 
   foto_belakang: multer({
     storage: createStorage("foto_belakang"),
     fileFilter: createFileFilter(["image/jpeg", "image/png", "image/jpg", "image/webp"]),
-    limits: { fileSize: 10 * 1024 * 1024 },
+    limits: { fileSize: 2 * 1024 * 1024 },
   }),
 
   foto_semua: multer({
@@ -173,7 +173,7 @@ const uploadConfigs = {
       },
     }),
     fileFilter: createFileFilter(["image/jpeg", "image/png", "image/jpg", "image/webp"]),
-    limits: { fileSize: 10 * 1024 * 1024 },
+    limits: { fileSize: 2 * 1024 * 1024 },
   }),
 
   // Generic upload dengan custom folder

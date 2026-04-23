@@ -1403,7 +1403,7 @@ exports.updateFlowBeasiswa = async (req, res) => {
             email_to: pendaftar.email,
             subject: "Pemberitahuan Hasil Verifikasi Administrasi - Aplikasi Palma",
             body_html: htmlContent,
-            status: "queued" 
+            status: "queued"
           });
         } catch (logErr) {
           console.error("Gagal menyimpan log email penolakan:", logErr.message);
@@ -4966,6 +4966,41 @@ exports.getKoreksiPendaftar = async (req, res) => {
     return successResponse(res, "Data berhasil dimuat", koreksi);
   } catch (error) {
     console.error(error);
+    return errorResponse(res, "Internal Server Error");
+  }
+};
+// Cek apakah NIK sudah terdaftar di trx_beasiswa (selain transaksi milik sendiri)
+exports.checkNikDuplikat = async (req, res) => {
+  try {
+    const { nik } = req.params;
+    const { id_trx_beasiswa } = req.query; // exclude transaksi milik sendiri
+
+    if (!nik || nik.length !== 16) {
+      return failResponse(res, "NIK tidak valid");
+    }
+
+    const whereClause = { nik };
+
+    // Exclude transaksi milik pendaftar itu sendiri agar saat edit tidak
+    // mentrigger false positive
+    if (id_trx_beasiswa) {
+      whereClause.id_trx_beasiswa = {
+        [Op.ne]: Number(id_trx_beasiswa),
+        id_flow: 4,
+      };
+    }
+
+    const existing = await TrxBeasiswa.findOne({
+      where: whereClause,
+      attributes: ["id_trx_beasiswa", "nik", "nama_lengkap", "id_flow"],
+    });
+
+    return successResponse(res, "Pengecekan NIK duplikat selesai", {
+      is_duplikat: !!existing,
+      data: existing ?? null,
+    });
+  } catch (error) {
+    console.error("Error checkNikDuplikat:", error);
     return errorResponse(res, "Internal Server Error");
   }
 };
