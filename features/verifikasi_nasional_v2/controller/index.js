@@ -1,61 +1,29 @@
 const { Op, fn, col } = require("sequelize");
-const { TrxBeasiswa } = require("../../../models");
+// ✅ FIX: IMPORT MODEL PROVINSI DIMASUKKAN KE SINI
+const { 
+  TrxBeasiswa, 
+  TrxBaDinasKabkota, 
+  TrxSkDinasKabkota,
+  TrxBaDinasProvinsi, 
+  TrxSkDinasProvinsi 
+} = require("../../../models");
 const { successResponse, errorResponse } = require("../../../common/response");
 const ExcelJS = require("exceljs");
+const { getFileUrl } = require("../../../common/middleware/upload_middleware");
 
-// exports.getRekapProvinsi = async (req, res) => {
-//   try {
-//     // Rekap per provinsi
-//     const rekap = await TrxBeasiswa.findAll({
-//       where: { 
-//         id_flow: 9,
-//         kode_dinas_provinsi: { [Op.ne]: null }
-//       },
-//       attributes: [
-//         "kode_dinas_provinsi",
-//         "nama_dinas_provinsi",
-//         [fn("COUNT", col("id_trx_beasiswa")), "jumlah_pendaftar"]
-//       ],
-//       group: ["kode_dinas_provinsi", "nama_dinas_provinsi"],
-//       order: [["nama_dinas_provinsi", "ASC"]],
-//       raw: true
-//     });
-
-//     // Menghitung total kluster Afirmasi dan Reguler untuk halaman awal
-//     const totalAfirmasi = await TrxBeasiswa.count({
-//       where: { id_flow: 9, nama_kluster: "Afirmasi" }
-//     });
-    
-//     const totalReguler = await TrxBeasiswa.count({
-//       where: { id_flow: 9, nama_kluster: "Reguler" }
-//     });
-
-//     return successResponse(res, "Berhasil memuat rekapitulasi provinsi", {
-//       rekap,
-//       total_afirmasi: totalAfirmasi,
-//       total_reguler: totalReguler
-//     });
-//   } catch (error) {
-//     console.error("Error getRekapProvinsi:", error);
-//     return errorResponse(res, "Internal Server Error");
-//   }
-// };
 exports.getRekapProvinsi = async (req, res) => {
   try {
-    const { kode_kabkota } = req.query; // Menerima query parameter filter
+    const { kode_kabkota } = req.query;
 
-    // Kondisi dasar (Flow 9 & Provinsi tidak null)
     const whereCondition = { 
       id_flow: 9,
       kode_dinas_provinsi: { [Op.ne]: null }
     };
 
-    // Jika filter kabupaten dipilih, tambahkan ke query where
     if (kode_kabkota && kode_kabkota !== "all") {
       whereCondition.kode_dinas_kabkota = kode_kabkota;
     }
 
-    // 1. Rekap per provinsi berdasarkan filter
     const rekap = await TrxBeasiswa.findAll({
       where: whereCondition,
       attributes: [
@@ -68,7 +36,6 @@ exports.getRekapProvinsi = async (req, res) => {
       raw: true
     });
 
-    // 2. Menghitung total kluster Afirmasi dan Reguler berdasarkan filter
     const totalAfirmasi = await TrxBeasiswa.count({
       where: { ...whereCondition, nama_kluster: "Afirmasi" }
     });
@@ -77,7 +44,6 @@ exports.getRekapProvinsi = async (req, res) => {
       where: { ...whereCondition, nama_kluster: "Reguler" }
     });
 
-    // 3. Ambil daftar semua kabupaten yang tersedia di flow 9 untuk dropdown filter (dipanggil tanpa filter whereCondition kabkota)
     const listKabkota = await TrxBeasiswa.findAll({
       where: { id_flow: 9, kode_dinas_kabkota: { [Op.ne]: null } },
       attributes: ["kode_dinas_kabkota", "nama_dinas_kabkota"],
@@ -90,13 +56,13 @@ exports.getRekapProvinsi = async (req, res) => {
       rekap,
       total_afirmasi: totalAfirmasi,
       total_reguler: totalReguler,
-      list_kabkota: listKabkota // Kirim ke frontend untuk Dropdown
+      list_kabkota: listKabkota 
     });
   } catch (error) {
-    console.error("Error getRekapProvinsi:", error);
     return errorResponse(res, "Internal Server Error");
   }
 };
+
 exports.getDetailProvinsi = async (req, res) => {
   try {
     const { kode_dinas_provinsi } = req.params;
@@ -132,7 +98,7 @@ exports.getDetailProvinsi = async (req, res) => {
         "nama_kluster",
         "nama_dinas_provinsi",
         "nama_dinas_kabkota",
-        "id_flow" // <--- DITAMBAHKAN AGAR FRONTEND BISA MEMBACA POSISI FLOW
+        "id_flow" 
       ],
       limit: parseInt(limit),
       offset: offset,
@@ -159,14 +125,14 @@ exports.getDetailProvinsi = async (req, res) => {
       total_pages: Math.ceil(count / parseInt(limit))
     });
   } catch (error) {
-    console.error("Error getDetailProvinsi:", error);
     return errorResponse(res, "Internal Server Error");
   }
 };
+
 exports.ubahStatusKluster = async (req, res) => {
   try {
     const { id_trx_beasiswa } = req.params;
-    const { nama_kluster } = req.body; // Menerima payload pilihan kluster dari Frontend
+    const { nama_kluster } = req.body; 
 
     const beasiswa = await TrxBeasiswa.findByPk(id_trx_beasiswa);
 
@@ -178,7 +144,6 @@ exports.ubahStatusKluster = async (req, res) => {
       return errorResponse(res, "Nama kluster wajib dikirim", 400);
     }
 
-    // Asumsi master kluster Anda: 1 = Afirmasi, 2 = Reguler
     const id_kluster = nama_kluster === "Afirmasi" ? 1 : 2; 
 
     beasiswa.nama_kluster = nama_kluster;
@@ -190,12 +155,10 @@ exports.ubahStatusKluster = async (req, res) => {
       nama_kluster
     });
   } catch (error) {
-    console.error("Error ubahStatusKluster:", error);
     return errorResponse(res, "Internal Server Error");
   }
 };
 
-// Aksi 5: Kirim ke Lembaga Seleksi (Update Flow 7 -> 10)
 exports.kirimLembagaSeleksi = async (req, res) => {
   try {
     const [updated] = await TrxBeasiswa.update(
@@ -204,15 +167,12 @@ exports.kirimLembagaSeleksi = async (req, res) => {
     );
     return successResponse(res, `Berhasil mengirim ${updated} pendaftar ke Lembaga Seleksi.`);
   } catch (error) {
-    console.error("Error kirimLembagaSeleksi:", error);
     return errorResponse(res, "Internal Server Error");
   }
 };
 
-// Aksi 5: Export Data Detail
 exports.exportDetailSemua = async (req, res) => {
   try {
-    // Ambil semua data detail untuk id_flow = 9
     const rows = await TrxBeasiswa.findAll({
       where: { id_flow: 9 },
       attributes: [
@@ -221,7 +181,7 @@ exports.exportDetailSemua = async (req, res) => {
         "kode_pendaftaran", 
         "jalur", 
         "nama_dinas_provinsi", 
-        "nama_dinas_kabkota", // <--- DITAMBAHKAN
+        "nama_dinas_kabkota", 
         "nama_kluster"
       ],
       order: [
@@ -232,11 +192,9 @@ exports.exportDetailSemua = async (req, res) => {
       raw: true
     });
 
-    // Buat workbook Excel
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Detail Verifikasi Nasional");
 
-    // Tentukan header kolom
     worksheet.columns = [
       { header: "No", key: "no", width: 8 },
       { header: "Nama Lengkap", key: "nama_lengkap", width: 35 },
@@ -244,11 +202,10 @@ exports.exportDetailSemua = async (req, res) => {
       { header: "Kode Pendaftaran", key: "kode_pendaftaran", width: 25 },
       { header: "Jalur", key: "jalur", width: 20 },
       { header: "Provinsi", key: "nama_dinas_provinsi", width: 35 },
-      { header: "Kabupaten/Kota", key: "nama_dinas_kabkota", width: 35 }, // <--- DITAMBAHKAN
+      { header: "Kabupaten/Kota", key: "nama_dinas_kabkota", width: 35 }, 
       { header: "Nama Kluster", key: "nama_kluster", width: 20 }
     ];
 
-    // Styling Header
     worksheet.getRow(1).eachCell((cell) => {
       cell.font = { bold: true };
       cell.alignment = { horizontal: "center" };
@@ -259,7 +216,6 @@ exports.exportDetailSemua = async (req, res) => {
       };
     });
 
-    // Tambahkan baris data
     rows.forEach((row, index) => {
       worksheet.addRow({
         no: index + 1,
@@ -268,12 +224,11 @@ exports.exportDetailSemua = async (req, res) => {
         kode_pendaftaran: row.kode_pendaftaran || "-",
         jalur: row.jalur || "-",
         nama_dinas_provinsi: row.nama_dinas_provinsi || "-",
-        nama_dinas_kabkota: row.nama_dinas_kabkota || "-", // <--- DITAMBAHKAN
+        nama_dinas_kabkota: row.nama_dinas_kabkota || "-",
         nama_kluster: row.nama_kluster || "-"
       });
     });
 
-    // Set header response agar terdeteksi sebagai file Excel
     res.setHeader(
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -287,7 +242,6 @@ exports.exportDetailSemua = async (req, res) => {
     return res.status(200).end();
 
   } catch (error) {
-    console.error("Error exportDetailSemua:", error);
     return errorResponse(res, "Internal Server Error");
   }
 };
@@ -301,7 +255,61 @@ exports.kirimDataKewilayahan = async (req, res) => {
 
     return successResponse(res, `Berhasil mengirim ${updatedCount} data ke tahap seleksi (Flow 6)`);
   } catch (error) {
-    console.log(error);
     return errorResponse(res, "Internal Server Error saat mengirim data");
+  }
+};
+
+// =========================================================================
+// MENAMPILKAN DOKUMEN PROVINSI (LANGSUNG TEMBAK KE TABEL PROVINSI)
+// =========================================================================
+exports.getDokumenProvinsi = async (req, res) => {
+  try {
+    const { kode_dinas_provinsi } = req.params;
+
+    if (!kode_dinas_provinsi) {
+      return errorResponse(res, "Kode Provinsi tidak valid", 400);
+    }
+
+    // ✅ FIX: Tarik langsung dari tabel TrxBaDinasProvinsi dan TrxSkDinasProvinsi
+    const baList = await TrxBaDinasProvinsi.findAll({
+      where: { kode_dinas_provinsi },
+      order: [["created_at", "DESC"]],
+      raw: true
+    });
+
+    const skList = await TrxSkDinasProvinsi.findAll({
+      where: { kode_dinas_provinsi },
+      order: [["created_at", "DESC"]],
+      raw: true
+    });
+
+    // Ambil 1 yang paling baru
+    const latestBa = baList.length > 0 ? baList[0] : null;
+    const latestSk = skList.length > 0 ? skList[0] : null;
+
+    const formattedBa = [];
+    if (latestBa && latestBa.filename) {
+      formattedBa.push({
+        ...latestBa,
+        file_url: getFileUrl(req, "berita_acara", latestBa.filename)
+      });
+    }
+
+    const formattedSk = [];
+    if (latestSk && latestSk.filename) {
+      formattedSk.push({
+        ...latestSk,
+        // Sesuai screenshot S3 lu, folder SK itu disimpennya di 'persyaratan'
+        file_url: getFileUrl(req, "persyaratan", latestSk.filename) 
+      });
+    }
+
+    return successResponse(res, "Berhasil memuat dokumen dari provinsi", {
+      berita_acara: formattedBa,
+      surat_keputusan: formattedSk
+    });
+  } catch (error) {
+    console.error("Error getDokumenProvinsi:", error);
+    return errorResponse(res, "Internal Server Error", 500);
   }
 };

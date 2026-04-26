@@ -6,6 +6,7 @@ const { successResponse, errorResponse } = require("../../../common/response");
 const ExcelJS = require("exceljs");
 const jwt = require("jsonwebtoken");
 const { sequelizeMaster } = require("../../../core/db_master_config");
+const { getFileUrl } = require("../../../common/middleware/upload_middleware");
 
 const getUserContext = async (req) => {
   const authHeader = req.headers["authorization"];
@@ -335,8 +336,10 @@ exports.uploadDokumenRekomtek = async (req, res) => {
   try {
     if (!req.file) return errorResponse(res, "File dokumen tidak ditemukan", 400);
     
-    const filename = req.file.filename;
-    const whereCondition = { id_flow: 12 };
+    const filename = req.file.filename || req.file.key || null;
+    if (!filename) return errorResponse(res, "Gagal mendapatkan nama file dari penyimpanan", 400);
+
+    const whereCondition = { id_flow: { [Op.in]: [12, 14] } };
     const userCtx = await getUserContext(req);
     
     if (userCtx && (userCtx.roles.includes(111) || userCtx.roles.includes(113))) {
@@ -360,7 +363,7 @@ exports.uploadDokumenRekomtek = async (req, res) => {
 
 exports.cekDokumenRekomtek = async (req, res) => {
   try {
-    const whereCondition = { id_flow: 12, file_rekomendasi_teknis: { [Op.ne]: null } };
+    const whereCondition = { id_flow: { [Op.in]: [12, 14] }, file_rekomendasi_teknis: { [Op.ne]: null } };
     
     const userCtx = await getUserContext(req);
     if (userCtx && (userCtx.roles.includes(111) || userCtx.roles.includes(113))) {
@@ -376,8 +379,12 @@ exports.cekDokumenRekomtek = async (req, res) => {
       attributes: ["file_rekomendasi_teknis"]
     });
     
+    const fileUrl = data && data.file_rekomendasi_teknis 
+      ? getFileUrl(req, "rekomtek", data.file_rekomendasi_teknis) 
+      : null;
+
     return successResponse(res, "Status dokumen", { 
-      filename: data ? data.file_rekomendasi_teknis : null 
+      filename: fileUrl 
     });
   } catch (error) {
     return errorResponse(res, "Gagal mengecek dokumen", 500);
@@ -400,7 +407,13 @@ exports.kirimKeFlow14 = async (req, res) => {
     }
 
     const pendaftarsAktif = await TrxBeasiswa.findAll({ 
-      where: { ...whereBase, status_undur_diri: { [Op.ne]: "Y" } }, 
+      where: { 
+        ...whereBase, 
+        [Op.or]: [
+          { status_undur_diri: { [Op.ne]: "Y" } },
+          { status_undur_diri: { [Op.is]: null } } 
+        ]
+      }, 
       raw: true,
       transaction
     });
@@ -522,7 +535,16 @@ exports.kirimKeFlow14 = async (req, res) => {
     if (pendaftarsAktif.length > 0) {
       await TrxBeasiswa.update(
         { id_flow: 14 },
-        { where: { ...whereBase, status_undur_diri: { [Op.ne]: "Y" } }, transaction }
+        { 
+          where: { 
+            ...whereBase, 
+            [Op.or]: [
+              { status_undur_diri: { [Op.ne]: "Y" } },
+              { status_undur_diri: { [Op.is]: null } } 
+            ]
+          }, 
+          transaction 
+        }
       );
     }
 

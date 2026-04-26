@@ -9,6 +9,9 @@ const checkAuthorization = require("./common/middleware/auth_middleware");
 const cekDataController = require("./features/cek_data/controller");
 const { verifyApiKey } = require("./common/middleware/apiKey_middleware");
 const penetapanController = require("./features/penetapan/controller");
+const referensiPublicRoute = require("./features/testing_server/route");
+
+require("dotenv").config();
 
 const app = express();
 app.set("trust proxy", true);
@@ -57,6 +60,8 @@ app.use(
   checkAuthorization,
   require("./features/penelaahan/route")
 );
+
+app.use('/api/public/referensi', referensiPublicRoute);
 
 app.use(
   "/api/rekomtek",

@@ -6,7 +6,8 @@ const {
   ubahStatusKluster,
   kirimLembagaSeleksi,
   exportDetailSemua,
-  kirimDataKewilayahan
+  kirimDataKewilayahan,
+  getDokumenProvinsi,
 } = require("../controller");
 
 router.get("/rekap-provinsi", getRekapProvinsi);
@@ -15,5 +16,6 @@ router.put("/ubah-kluster/:id_trx_beasiswa", ubahStatusKluster);
 router.put("/kirim-seleksi", kirimLembagaSeleksi);
 router.get("/export-detail", exportDetailSemua);
 router.put("/rekap-administrasi/kirim", kirimDataKewilayahan);
+router.get("/dokumen-provinsi/:kode_dinas_provinsi", getDokumenProvinsi);
 
 module.exports = router;

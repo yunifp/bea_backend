@@ -2,13 +2,14 @@ const { Op } = require("sequelize");
 const { TrxBeasiswa, sequelize, TrxMahasiswaFinal } = require("../../../models");
 const { successResponse, errorResponse } = require("../../../common/response");
 const excelJS = require("exceljs");
+// ✅ TAMBAHAN: Import getFileUrl untuk translate URL S3
+const { getFileUrl } = require("../../../common/middleware/upload_middleware");
 
 // ==========================================
 // 1. Get Data Master Penetapan (Halaman Utama)
 // ==========================================
 exports.getListPenetapanMaster = async (req, res) => {
   try {
-    // Mengelompokkan pendaftar di flow 14 berdasarkan ID dan Nama Beasiswa
     const rows = await TrxBeasiswa.findAll({
       attributes: [
         "id_ref_beasiswa",
@@ -19,15 +20,14 @@ exports.getListPenetapanMaster = async (req, res) => {
       group: ["id_ref_beasiswa", "nama_beasiswa"]
     });
 
-    // Format data agar sesuai dengan gambar UI mockup Anda
     const formattedData = rows.map((r, index) => ({
       no: index + 1,
       id_ref_beasiswa: r.id_ref_beasiswa || 0,
       nama_penetapan: r.nama_beasiswa || "Penetapan Beasiswa 2025",
-      tanggal_penetapan: new Date().toISOString().split("T")[0], // Mockup Tanggal Hari Ini
-      instansi: "Kementerian Pertanian", // Mockup Instansi (diabaikan jika di FE dihapus)
+      tanggal_penetapan: new Date().toISOString().split("T")[0], 
+      instansi: "Kementerian Pertanian", 
       jumlah_kuota: r.get("jumlah_penerima"),
-      keterangan: "Selesai" // Mockup Keterangan (diabaikan jika di FE dihapus)
+      keterangan: "Selesai" 
     }));
 
     return successResponse(res, "Data master penetapan dimuat", {
@@ -76,8 +76,17 @@ exports.getDetailPenetapan = async (req, res) => {
       order: [["urutan_ranking", "ASC"]],
     });
 
+    // ✅ PERBAIKAN: Format data agar file rekomtek menjadi URL S3 yang utuh
+    const mappedRows = rows.map(row => {
+      const r = row.toJSON();
+      if (r.file_rekomendasi_teknis) {
+        r.file_rekomendasi_teknis = getFileUrl(req, "rekomtek", r.file_rekomendasi_teknis);
+      }
+      return r;
+    });
+
     return successResponse(res, "Data detail penetapan dimuat", {
-      result: rows,
+      result: mappedRows,
       total: count,
       current_page: page,
       total_pages: Math.ceil(count / limit),
@@ -98,8 +107,13 @@ exports.cekDokumenPenetapan = async (req, res) => {
       attributes: ["file_rekomendasi_teknis"]
     });
 
+    // ✅ PERBAIKAN: Berikan URL utuh dari NEO S3
+    const fileUrl = data && data.file_rekomendasi_teknis 
+      ? getFileUrl(req, "rekomtek", data.file_rekomendasi_teknis) 
+      : null;
+
     return successResponse(res, "Status dokumen penetapan", {
-      filename: data ? data.file_rekomendasi_teknis : null
+      filename: fileUrl
     });
   } catch (error) {
     return errorResponse(res, "Gagal mengecek dokumen");
@@ -116,7 +130,6 @@ exports.downloadDataPenetapan = async (req, res) => {
     const whereCondition = { id_flow: 14 };
     if (id_ref) whereCondition.id_ref_beasiswa = id_ref;
 
-    // Ambil semua data tanpa pagination
     const data = await TrxBeasiswa.findAll({
       where: whereCondition,
       attributes: [
@@ -137,7 +150,6 @@ exports.downloadDataPenetapan = async (req, res) => {
     const workbook = new excelJS.Workbook();
     const worksheet = workbook.addWorksheet("Data Peserta Diterima");
 
-    // Header Kolom
     worksheet.columns = [
       { header: "No", key: "no", width: 5 },
       { header: "Kode Pendaftaran", key: "kode_pendaftaran", width: 20 },
@@ -147,7 +159,6 @@ exports.downloadDataPenetapan = async (req, res) => {
       { header: "Program Studi Diterima", key: "prodi_final", width: 35 },
     ];
 
-    // Isi Data
     data.forEach((item, index) => {
       worksheet.addRow({
         no: index + 1,
@@ -159,7 +170,6 @@ exports.downloadDataPenetapan = async (req, res) => {
       });
     });
 
-    // Style Header
     worksheet.getRow(1).eachCell((cell) => {
       cell.font = { bold: true };
       cell.fill = {
@@ -190,7 +200,6 @@ exports.downloadDataPenetapan = async (req, res) => {
 
 exports.getExternalMahasiswaFinal = async (req, res) => {
   try {
-    // PERBAIKAN 1: Tambahkan 'tahun_angkatan' pada destructuring req.query
     const { id_pt_final, id_jenjang, tahun, tahun_angkatan } = req.query;
 
     const whereCondition = {};
@@ -221,7 +230,6 @@ exports.getExternalMahasiswaFinal = async (req, res) => {
       }
     }
 
-    // PERBAIKAN 2: Prioritaskan 'tahun_angkatan', jika kosong gunakan 'tahun'
     const filterTahun = tahun_angkatan || tahun;
     if (filterTahun) {
       whereCondition.tahun_angkatan = filterTahun;
