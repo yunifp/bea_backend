@@ -293,7 +293,7 @@ const uploadConfigs = {
   persyaratan: multer({
     storage: createStorage("persyaratan"),
     fileFilter: createFileFilter(["application/pdf", "image/png", "image/jpeg"]),
-    limits: { fileSize: 2 * 1024 * 1024 },
+    limits: { fileSize: 10 * 1024 * 1024 },
   }),
 
   berita_acara: multer({
