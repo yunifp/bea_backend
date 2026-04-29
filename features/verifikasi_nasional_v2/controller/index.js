@@ -1,5 +1,4 @@
 const { Op, fn, col } = require("sequelize");
-// ✅ FIX: IMPORT MODEL PROVINSI DIMASUKKAN KE SINI
 const { 
   TrxBeasiswa, 
   TrxBaDinasKabkota, 
@@ -66,7 +65,8 @@ exports.getRekapProvinsi = async (req, res) => {
 exports.getDetailProvinsi = async (req, res) => {
   try {
     const { kode_dinas_provinsi } = req.params;
-    const { page = 1, limit = 10, search = "" } = req.query;
+    // ✅ Menangkap parameter filter kode_kabkota (dari query frontend)
+    const { page = 1, limit = 10, search = "", kode_kabkota } = req.query;
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
 
@@ -74,6 +74,11 @@ exports.getDetailProvinsi = async (req, res) => {
       id_flow: 9,
       kode_dinas_provinsi: kode_dinas_provinsi
     };
+
+    // ✅ Jika user klik kabupaten di frontend, saring berdasarkan kabupaten
+    if (kode_kabkota && kode_kabkota !== "all") {
+      whereCondition.kode_dinas_kabkota = kode_kabkota;
+    }
 
     if (search) {
       whereCondition[Op.or] = [
@@ -259,9 +264,6 @@ exports.kirimDataKewilayahan = async (req, res) => {
   }
 };
 
-// =========================================================================
-// MENAMPILKAN DOKUMEN PROVINSI (LANGSUNG TEMBAK KE TABEL PROVINSI)
-// =========================================================================
 exports.getDokumenProvinsi = async (req, res) => {
   try {
     const { kode_dinas_provinsi } = req.params;
@@ -270,7 +272,6 @@ exports.getDokumenProvinsi = async (req, res) => {
       return errorResponse(res, "Kode Provinsi tidak valid", 400);
     }
 
-    // ✅ FIX: Tarik langsung dari tabel TrxBaDinasProvinsi dan TrxSkDinasProvinsi
     const baList = await TrxBaDinasProvinsi.findAll({
       where: { kode_dinas_provinsi },
       order: [["created_at", "DESC"]],
@@ -283,7 +284,6 @@ exports.getDokumenProvinsi = async (req, res) => {
       raw: true
     });
 
-    // Ambil 1 yang paling baru
     const latestBa = baList.length > 0 ? baList[0] : null;
     const latestSk = skList.length > 0 ? skList[0] : null;
 
@@ -299,7 +299,6 @@ exports.getDokumenProvinsi = async (req, res) => {
     if (latestSk && latestSk.filename) {
       formattedSk.push({
         ...latestSk,
-        // Sesuai screenshot S3 lu, folder SK itu disimpennya di 'persyaratan'
         file_url: getFileUrl(req, "persyaratan", latestSk.filename) 
       });
     }
@@ -310,6 +309,97 @@ exports.getDokumenProvinsi = async (req, res) => {
     });
   } catch (error) {
     console.error("Error getDokumenProvinsi:", error);
+    return errorResponse(res, "Internal Server Error", 500);
+  }
+};
+
+// ✅ TAMBAHAN: REKAP KABUPATEN/KOTA UNTUK SATU PROVINSI
+exports.getRekapKabkotaByProvinsi = async (req, res) => {
+  try {
+    const { kode_dinas_provinsi } = req.params;
+
+    if (!kode_dinas_provinsi) {
+      return errorResponse(res, "Kode Provinsi tidak valid", 400);
+    }
+
+    const rekap = await TrxBeasiswa.findAll({
+      where: {
+        id_flow: 9,
+        kode_dinas_provinsi: kode_dinas_provinsi,
+        kode_dinas_kabkota: { [Op.ne]: null }
+      },
+      attributes: [
+        "kode_dinas_kabkota",
+        "nama_dinas_kabkota",
+        [fn("COUNT", col("id_trx_beasiswa")), "jumlah_pendaftar"]
+      ],
+      group: ["kode_dinas_kabkota", "nama_dinas_kabkota"],
+      order: [["nama_dinas_kabkota", "ASC"]],
+      raw: true
+    });
+
+    const provinsiInfo = await TrxBeasiswa.findOne({
+      where: { kode_dinas_provinsi },
+      attributes: ["nama_dinas_provinsi"],
+      raw: true
+    });
+
+    return successResponse(res, "Berhasil memuat rekapitulasi kabupaten/kota", {
+      rekap,
+      nama_provinsi: provinsiInfo ? provinsiInfo.nama_dinas_provinsi : "Provinsi"
+    });
+  } catch (error) {
+    console.error("Error getRekapKabkotaByProvinsi:", error);
+    return errorResponse(res, "Internal Server Error", 500);
+  }
+};
+
+// ✅ TAMBAHAN: MENDAPATKAN DOKUMEN BA & SK KABUPATEN/KOTA
+exports.getDokumenKabkota = async (req, res) => {
+  try {
+    const { kode_dinas_kabkota } = req.params;
+
+    if (!kode_dinas_kabkota) {
+      return errorResponse(res, "Kode Kabupaten/Kota tidak valid", 400);
+    }
+
+    const baList = await TrxBaDinasKabkota.findAll({
+      where: { kode_dinas_kabkota },
+      order: [["created_at", "DESC"]],
+      raw: true
+    });
+
+    const skList = await TrxSkDinasKabkota.findAll({
+      where: { kode_dinas_kabkota },
+      order: [["created_at", "DESC"]],
+      raw: true
+    });
+
+    const latestBa = baList.length > 0 ? baList[0] : null;
+    const latestSk = skList.length > 0 ? skList[0] : null;
+
+    const formattedBa = [];
+    if (latestBa && latestBa.filename) {
+      formattedBa.push({
+        ...latestBa,
+        file_url: getFileUrl(req, "berita_acara", latestBa.filename)
+      });
+    }
+
+    const formattedSk = [];
+    if (latestSk && latestSk.filename) {
+      formattedSk.push({
+        ...latestSk,
+        file_url: getFileUrl(req, "persyaratan", latestSk.filename) 
+      });
+    }
+
+    return successResponse(res, "Berhasil memuat dokumen dari kabupaten/kota", {
+      berita_acara: formattedBa,
+      surat_keputusan: formattedSk
+    });
+  } catch (error) {
+    console.error("Error getDokumenKabkota:", error);
     return errorResponse(res, "Internal Server Error", 500);
   }
 };
