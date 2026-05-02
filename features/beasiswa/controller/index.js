@@ -5,6 +5,8 @@ const {
 } = require("../../../common/response");
 const axios = require("axios");
 const { Op, where, fn, col, literal, DATE } = require("sequelize");
+const { sequelizeMaster } = require("../../../core/db_master_config");
+const PDFDocument = require("pdfkit-table");
 const {
   TrxBeasiswa,
   TrxDokumenUmum,
@@ -176,6 +178,7 @@ const FOTO_FIELDS = [
 ];
 
 const addFotoToArchive = async (archive, data, folderPrefix) => {
+  const kodePendaftaran = data.kode_pendaftaran || "Tanpa-No";
   for (const { field, label } of FOTO_FIELDS) {
     if (data[field]) {
       const ext = path.extname(data[field]) || ".jpg";
@@ -183,72 +186,92 @@ const addFotoToArchive = async (archive, data, folderPrefix) => {
         archive,
         field,                                  
         data[field],                            
-        `${folderPrefix}/foto/${label}${ext}`   
+        `${folderPrefix}/foto/${kodePendaftaran} - ${label}${ext}` // <--- Format diubah di sini
       );
     }
   }
-};
+};  
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helper: dokumen umum (disimpan di folder "persyaratan")
-// ─────────────────────────────────────────────────────────────────────────────
-const addDokumenUmumToArchive = async (archive, idTrxBeasiswa, folderPrefix) => {
+const addDokumenUmumToArchive = async (archive, idTrxBeasiswa, folderPrefix, mapRefUmum = {}, kodePendaftaran = "Tanpa-No") => {
   const dokList = await TrxDokumenUmum.findAll({
     where: { id_trx_beasiswa: idTrxBeasiswa },
-    attributes: ["id", "nama_dokumen_persyaratan", "file"],
+    attributes: ["id", "id_ref_dokumen", "nama_dokumen_persyaratan", "file"],
   });
 
   for (const dok of dokList) {
     if (!dok.file) continue;
     const ext = path.extname(dok.file) || ".pdf";
-    const nameSafe = safeDocName(dok.nama_dokumen_persyaratan, dok.id);
+    
+    let rawName = mapRefUmum[dok.id_ref_dokumen] || dok.nama_dokumen_persyaratan;
+    
+    if (rawName && rawName.includes('.')) {
+        rawName = rawName.split('.').slice(0, -1).join('.');
+    }
+
+    const nameSafe = safeDocName(rawName, dok.id);
     await addFileToArchive(
       archive,
       "persyaratan",                                         
       dok.file,
-      `${folderPrefix}/dokumen_umum/${nameSafe}${ext}`      
+      `${folderPrefix}/dokumen_umum/${kodePendaftaran} - ${nameSafe}${ext}` // <--- Format diubah di sini
     );
   }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helper: dokumen khusus (juga disimpan di folder "persyaratan")
+// Helper: dokumen khusus
 // ─────────────────────────────────────────────────────────────────────────────
-const addDokumenKhususToArchive = async (archive, idTrxBeasiswa, folderPrefix) => {
+const addDokumenKhususToArchive = async (archive, idTrxBeasiswa, folderPrefix, mapRefKhusus = {}, kodePendaftaran = "Tanpa-No") => {
   const dokList = await TrxDokumenKhusus.findAll({
     where: { id_trx_beasiswa: idTrxBeasiswa },
-    attributes: ["id", "nama_dokumen_persyaratan", "file"],
+    attributes: ["id", "id_ref_dokumen", "nama_dokumen_persyaratan", "file"],
   });
 
   for (const dok of dokList) {
     if (!dok.file) continue;
     const ext = path.extname(dok.file) || ".pdf";
-    const nameSafe = safeDocName(dok.nama_dokumen_persyaratan, dok.id);
+
+    let rawName = mapRefKhusus[dok.id_ref_dokumen] || dok.nama_dokumen_persyaratan;
+    if (rawName && rawName.includes('.')) {
+        rawName = rawName.split('.').slice(0, -1).join('.');
+    }
+
+    const nameSafe = safeDocName(rawName, dok.id);
     await addFileToArchive(
       archive,
       "persyaratan",
       dok.file,
-      `${folderPrefix}/dokumen_khusus/${nameSafe}${ext}`
+      `${folderPrefix}/dokumen_khusus/${kodePendaftaran} - ${nameSafe}${ext}` // <--- Format diubah di sini
     );
   }
 };
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper: gabungkan sesuai kategori
 // ─────────────────────────────────────────────────────────────────────────────
-const addDokumenByKategori = async (archive, data, folderPrefix, kategori) => {
+const addDokumenByKategori = async (archive, data, folderPrefix, kategori, mapRefUmum = {}, mapRefKhusus = {}) => {
   const k = kategori || "all";
+  const kodePendaftaran = data.kode_pendaftaran || "Tanpa-No";
+  
+  // 1. Tambahkan PDF Hasil Seleksi (Hanya jika kategori "all" atau "dokumen_umum")
+  if (k === "all" || k === "dokumen_umum") {
+    await addHasilSeleksiPdfToArchive(archive, data, folderPrefix, mapRefUmum, mapRefKhusus);
+  }
+
+  // 2. Tambahkan Foto
   if (k === "all" || k === "foto") {
     await addFotoToArchive(archive, data, folderPrefix);
   }
+
+  // 3. Tambahkan Dokumen Umum
   if (k === "all" || k === "dokumen_umum") {
-    await addDokumenUmumToArchive(archive, data.id_trx_beasiswa, folderPrefix);
+    await addDokumenUmumToArchive(archive, data.id_trx_beasiswa, folderPrefix, mapRefUmum, kodePendaftaran);
   }
+
+  // 4. Tambahkan Dokumen Khusus
   if (k === "all" || k === "dokumen_khusus") {
-    await addDokumenKhususToArchive(archive, data.id_trx_beasiswa, folderPrefix);
+    await addDokumenKhususToArchive(archive, data.id_trx_beasiswa, folderPrefix, mapRefKhusus, kodePendaftaran);
   }
 };
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared: setup header + archiver + pipe ke res
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3303,12 +3326,23 @@ exports.downloadPendaftarZip = async (req, res) => {
 
     if (!trx) return res.status(404).json({ message: "Data tidak ditemukan" });
 
+    // === RAW QUERY KE DATABASE MASTER ===
+    const [refUmum] = await sequelizeMaster.query("SELECT id, nama_file_unduh FROM ref_syarat_umum_beasiswa");
+    const [refKhusus] = await sequelizeMaster.query("SELECT id, nama_file_unduh FROM ref_syarat_khusus_beasiswa");
+    
+    // Mapping agar cepat saat di-looping
+    const mapRefUmum = refUmum.reduce((acc, curr) => { acc[curr.id] = curr.nama_file_unduh; return acc; }, {});
+    const mapRefKhusus = refKhusus.reduce((acc, curr) => { acc[curr.id] = curr.nama_file_unduh; return acc; }, {});
+
     const data = trx.toJSON();
     const folderName = safeFolderName(data);
     const zipFilename = `dokumen_${folderName}_${kategori}.zip`;
 
     const archive = createZipResponse(res, zipFilename);
-    await addDokumenByKategori(archive, data, folderName, kategori); 
+    
+    // Oper mapping ke helper zip
+    await addDokumenByKategori(archive, data, folderName, kategori, mapRefUmum, mapRefKhusus); 
+    
     await archive.finalize();
   } catch (error) {
     console.error("Error downloadPendaftarZip:", error);
@@ -3335,6 +3369,13 @@ exports.downloadBulkZip = async (req, res) => {
 
     if (rows.length === 0) return res.status(404).json({ message: "Tidak ada data ditemukan" });
 
+    // === RAW QUERY KE DATABASE MASTER SEKALI SAJA ===
+    const [refUmum] = await sequelizeMaster.query("SELECT id, nama_file_unduh FROM ref_syarat_umum_beasiswa");
+    const [refKhusus] = await sequelizeMaster.query("SELECT id, nama_file_unduh FROM ref_syarat_khusus_beasiswa");
+    
+    const mapRefUmum = refUmum.reduce((acc, curr) => { acc[curr.id] = curr.nama_file_unduh; return acc; }, {});
+    const mapRefKhusus = refKhusus.reduce((acc, curr) => { acc[curr.id] = curr.nama_file_unduh; return acc; }, {});
+
     const jalurLabel = id_jalur ? `_jalur${id_jalur}` : "";
     const catLabel = kategori !== "all" ? `_${kategori}` : "";
     const ts = new Date().toISOString().slice(0, 10);
@@ -3345,7 +3386,7 @@ exports.downloadBulkZip = async (req, res) => {
     for (const trx of rows) {
       const data = trx.toJSON();
       const folderPrefix = safeFolderName(data);
-      await addDokumenByKategori(archive, data, folderPrefix, kategori); 
+      await addDokumenByKategori(archive, data, folderPrefix, kategori, mapRefUmum, mapRefKhusus); 
     }
 
     await archive.finalize();
@@ -3411,6 +3452,308 @@ exports.getKoreksiPendaftar = async (req, res) => {
   }
 };
 
+exports.downloadPdfHasilVerifikasi = async (req, res) => {
+  try {
+    const { idTrxBeasiswa } = req.params;
+
+    const beasiswa = await TrxBeasiswa.findOne({
+      where: { id_trx_beasiswa: idTrxBeasiswa }
+    });
+
+    if (!beasiswa) {
+      return errorResponse(res, "Data pendaftar tidak ditemukan", 404);
+    }
+
+    const dokUmum = await TrxDokumenUmum.findAll({ where: { id_trx_beasiswa: idTrxBeasiswa } });
+    const dokKhusus = await TrxDokumenKhusus.findAll({ where: { id_trx_beasiswa: idTrxBeasiswa } });
+
+    // === RAW QUERY KE MASTER UNTUK MENDAPATKAN NAMA TEMPLATE ===
+    const [refUmum] = await sequelizeMaster.query("SELECT id, nama_file_unduh FROM ref_syarat_umum_beasiswa");
+    const [refKhusus] = await sequelizeMaster.query("SELECT id, nama_file_unduh FROM ref_syarat_khusus_beasiswa");
+
+    const mapRefUmum = refUmum.reduce((acc, curr) => { acc[curr.id] = curr.nama_file_unduh; return acc; }, {});
+    const mapRefKhusus = refKhusus.reduce((acc, curr) => { acc[curr.id] = curr.nama_file_unduh; return acc; }, {});
+
+    // Setup dokumen PDF dengan margin 50
+    const doc = new PDFDocument({ 
+      margins: { top: 50, bottom: 50, left: 50, right: 50 }, 
+      size: 'A4' 
+    });
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="Hasil_Verifikasi_${beasiswa.kode_pendaftaran || idTrxBeasiswa}.pdf"`
+    );
+
+    doc.pipe(res);
+
+    // 1. KOP SURAT / HEADER
+    const logoPath = path.join(__dirname, '../../../assets/Ditjenbun.png');
+    
+    if (fs.existsSync(logoPath)) {
+      doc.image(logoPath, 50, 40, { width: 120 });
+    } else {
+      doc.rect(50, 40, 120, 50).dash(5, {space: 5}).stroke(); 
+      doc.undash();
+    }
+
+    // Teks Kop Surat (Di sebelah kanan logo)
+    doc.font('Helvetica-Bold').fontSize(11)
+       .text("BEASISWA PENGEMBANGAN SUMBER DAYA MANUSIA", 180, 45, { align: 'center', width: 365 })
+       .text("PERKEBUNAN KELAPA SAWIT", { align: 'center', width: 365 })
+       .text("2026", { align: 'center', width: 365 });
+
+    doc.moveDown(2);
+
+    // Judul Dokumen
+    doc.font('Helvetica-Bold').fontSize(12)
+       .text("HASIL SELEKSI ADMINISTRASI", 50, doc.y, { align: 'center', width: 495 });
+    
+    doc.moveDown(1.5);
+
+    // 2. DATA DIRI (LAYOUT 2 KOLOM)
+    doc.fontSize(9);
+
+    const startX1 = 50;
+    const col1LabelW = 100;
+    const col1ValX = startX1 + col1LabelW + 10;
+    const col1ValW = 140;
+
+    const startX2 = 310;
+    const col2LabelW = 90;
+    const col2ValX = startX2 + col2LabelW + 10;
+    const col2ValW = 135;
+
+    const printRow2Col = (label1, val1, label2, val2) => {
+      const y = doc.y;
+      const textVal1 = val1 || '-';
+      const textVal2 = val2 || '-';
+      
+      const h1 = Math.max(doc.heightOfString(label1, {width: col1LabelW}), doc.heightOfString(textVal1, {width: col1ValW}));
+      const h2 = label2 ? Math.max(doc.heightOfString(label2, {width: col2LabelW}), doc.heightOfString(textVal2, {width: col2ValW})) : 0;
+      const maxH = Math.max(h1, h2);
+
+      doc.font('Helvetica-Bold').text(label1, startX1, y, { width: col1LabelW, align: 'left' });
+      doc.font('Helvetica-Bold').text(':', startX1 + col1LabelW, y, { width: 10, align: 'center' });
+      doc.font('Helvetica').text(textVal1, col1ValX, y, { width: col1ValW, align: 'left' });
+
+      if (label2) {
+        doc.font('Helvetica-Bold').text(label2, startX2, y, { width: col2LabelW, align: 'left' });
+        doc.font('Helvetica-Bold').text(':', startX2 + col2LabelW, y, { width: 10, align: 'center' });
+        doc.font('Helvetica').text(textVal2, col2ValX, y, { width: col2ValW, align: 'left' });
+      }
+
+      doc.y = y + maxH + 5; 
+    };
+
+    printRow2Col("Kode Pendaftar", beasiswa.kode_pendaftaran, "Nama Ayah", beasiswa.ayah_nama);
+    printRow2Col("Nama Pendaftar", beasiswa.nama_lengkap, "No. Telepon Ayah", beasiswa.ayah_no_hp);
+    printRow2Col("NIK", beasiswa.nik, "Nama Ibu", beasiswa.ibu_nama);
+    printRow2Col("Periode", beasiswa.nama_beasiswa, "No. Telepon Ibu", beasiswa.ibu_no_hp);
+    printRow2Col("Kategori Pendaftaran", beasiswa.jalur, null, null);
+    printRow2Col("Nomor Telepon", beasiswa.no_hp, null, null);
+    printRow2Col("Alamat KTP", beasiswa.tinggal_alamat, null, null);
+    printRow2Col("Alamat Kerja / Kebun", beasiswa.kerja_alamat, null, null);
+
+    doc.moveDown(1.5);
+    doc.x = 50; 
+
+    // 3. TABEL PERSYARATAN
+    const tableData = [];
+    let no = 1;
+
+    const processDokumen = (dokList, isKhusus = false) => {
+      dokList.forEach(dok => {
+        let status = dok.status_verifikasi || "Belum Diverifikasi";
+        
+        // 1. Ambil nama referensi dari master
+        let namaFileRef = isKhusus ? mapRefKhusus[dok.id_ref_dokumen] : mapRefUmum[dok.id_ref_dokumen];
+        
+        // 2. Ekstrak nama asli dan ekstensi (.jpg, .pdf) dari file yang diupload user
+        let namaFileAsli = dok.file ? String(dok.file).split('/').pop() : "-";
+        let ekstensiAsli = dok.file ? path.extname(dok.file) : ""; 
+
+        let namaFinal = "-";
+
+        if (namaFileRef) {
+          // Cek apakah admin sudah mengisi ekstensinya di database master
+          if (!namaFileRef.includes('.')) {
+            // Jika master belum ada titik (ekstensi), gabungkan dengan ekstensi file asli yang diupload user
+            namaFinal = `${namaFileRef}${ekstensiAsli}`;
+          } else {
+            // Jika di master sudah ditulis lengkap misal "template.pdf"
+            namaFinal = namaFileRef;
+          }
+        } else {
+          // Jika master kosong, gunakan nama file asli
+          namaFinal = namaFileAsli;
+        }
+        
+        tableData.push([
+          String(no++),
+          dok.nama_dokumen_persyaratan || "-",
+          namaFinal,
+          status.toUpperCase()
+        ]);
+      });
+    };
+
+    processDokumen(dokUmum, false);
+    processDokumen(dokKhusus, true);
+
+    const table = {
+      headers: [
+        { label: "No.", property: "no", width: 25, align: "center" },
+        { label: "Syarat", property: "syarat", width: 260 },
+        { label: "Dokumen", property: "dokumen", width: 130 },
+        { label: "Hasil", property: "status", width: 80, align: "center" }
+      ],
+      rows: tableData
+    };
+
+    await doc.table(table, {
+      x: 50, 
+      width: 495, 
+      prepareHeader: () => doc.font("Helvetica-Bold").fontSize(9),
+      prepareRow: () => doc.font("Helvetica").fontSize(8),
+      padding: 5,
+      divider: {
+        header: { disabled: false, width: 1, opacity: 1 },
+        horizontal: { disabled: false, width: 0.5, opacity: 0.5 }
+      }
+    });
+
+    // 4. FOOTER
+    doc.moveDown(2);
+    const dateStr = new Date().toLocaleDateString('id-ID', { 
+      day: 'numeric', month: 'long', year: 'numeric',
+      hour: '2-digit', minute: '2-digit'
+    });
+    
+    doc.x = 50;
+    doc.font('Helvetica-Oblique').fontSize(8)
+       .text(`Dicetak secara otomatis dari sistem pada: ${dateStr} WIB`, 50, doc.y, { align: "left", width: 495 });
+
+    doc.end();
+  } catch (error) {
+    console.error("Error generate PDF:", error);
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, message: "Gagal menghasilkan PDF" });
+    }
+  }
+};
+
+const addHasilSeleksiPdfToArchive = async (archive, data, folderPrefix, mapRefUmum, mapRefKhusus) => {
+  try {
+    const idTrxBeasiswa = data.id_trx_beasiswa;
+    const kodePendaftaran = data.kode_pendaftaran || "Tanpa-No";
+
+    // Ambil data dokumen pendaftar
+    const dokUmum = await TrxDokumenUmum.findAll({ where: { id_trx_beasiswa } });
+    const dokKhusus = await TrxDokumenKhusus.findAll({ where: { id_trx_beasiswa } });
+
+    const doc = new PDFDocument({ 
+      margins: { top: 50, bottom: 50, left: 50, right: 50 }, 
+      size: 'A4' 
+    });
+
+    // === FIX: Masukkan PDF ke ZIP sejak awal agar stream tertangkap sempurna ===
+    archive.append(doc, { name: `${folderPrefix}/${kodePendaftaran} - Hasil Seleksi Administrasi.pdf` });
+
+    // 1. KOP SURAT / HEADER
+    const logoPath = path.join(__dirname, '../../../assets/Ditjenbun.png');
+    if (fs.existsSync(logoPath)) {
+      doc.image(logoPath, 50, 40, { width: 120 });
+    } else {
+      doc.rect(50, 40, 120, 50).dash(5, {space: 5}).stroke(); 
+      doc.undash();
+    }
+
+    doc.font('Helvetica-Bold').fontSize(11)
+       .text("BEASISWA PENGEMBANGAN SUMBER DAYA MANUSIA", 180, 45, { align: 'center', width: 365 })
+       .text("PERKEBUNAN KELAPA SAWIT", { align: 'center', width: 365 })
+       .text("2026", { align: 'center', width: 365 });
+
+    doc.moveDown(2);
+    doc.font('Helvetica-Bold').fontSize(12)
+       .text("HASIL SELEKSI ADMINISTRASI", 50, doc.y, { align: 'center', width: 495 });
+    
+    doc.moveDown(1.5);
+
+    // 2. DATA DIRI
+    doc.fontSize(9);
+    const startX1 = 50, col1ValX = 160, col1ValW = 140;
+    const startX2 = 310, col2ValX = 410, col2ValW = 135;
+
+    const printRow2Col = (label1, val1, label2, val2) => {
+      const y = doc.y;
+      const h1 = doc.heightOfString(val1 || '-', {width: col1ValW});
+      const h2 = label2 ? doc.heightOfString(val2 || '-', {width: col2ValW}) : 0;
+      const maxH = Math.max(h1, h2, 10);
+
+      doc.font('Helvetica-Bold').text(label1, startX1, y, { width: 100 });
+      doc.text(':', col1ValX - 10, y, { width: 10, align: 'center' });
+      doc.font('Helvetica').text(val1 || '-', col1ValX, y, { width: col1ValW });
+
+      if (label2) {
+        doc.font('Helvetica-Bold').text(label2, startX2, y, { width: 90 });
+        doc.text(':', col2ValX - 10, y, { width: 10, align: 'center' });
+        doc.font('Helvetica').text(val2 || '-', col2ValX, y, { width: col2ValW });
+      }
+      doc.y = y + maxH + 5; 
+    };
+
+    printRow2Col("Kode Pendaftar", data.kode_pendaftaran, "Nama Ayah", data.ayah_nama);
+    printRow2Col("Nama Pendaftar", data.nama_lengkap, "No. Telepon Ayah", data.ayah_no_hp);
+    printRow2Col("NIK", data.nik, "Nama Ibu", data.ibu_nama);
+    printRow2Col("Periode", data.nama_beasiswa, "No. Telepon Ibu", data.ibu_no_hp);
+    printRow2Col("Kategori", data.jalur, null, null);
+    printRow2Col("Nomor Telepon", data.no_hp, null, null);
+    printRow2Col("Alamat KTP", data.tinggal_alamat, null, null);
+    printRow2Col("Alamat Kerja", data.kerja_alamat, null, null);
+
+    doc.moveDown(1.5);
+
+    // 3. TABEL
+    const tableData = [];
+    let no = 1;
+    const processRows = (list, isKhusus) => {
+      list.forEach(dok => {
+        let status = (dok.status_verifikasi || "Belum Diverifikasi").toUpperCase();
+        let refName = isKhusus ? mapRefKhusus[dok.id_ref_dokumen] : mapRefUmum[dok.id_ref_dokumen];
+        let ext = path.extname(dok.file || "");
+        let nameFinal = refName ? (refName.includes('.') ? refName : `${refName}${ext}`) : (dok.file ? String(dok.file).split('/').pop() : "-");
+        tableData.push([String(no++), dok.nama_dokumen_persyaratan || "-", nameFinal, status]);
+      });
+    };
+    processRows(dokUmum, false);
+    processRows(dokKhusus, true);
+
+    await doc.table({
+      headers: [
+        { label: "No.", property: "no", width: 25 }, 
+        { label: "Syarat", property: "s", width: 260 }, 
+        { label: "Dokumen", property: "d", width: 130 }, 
+        { label: "Hasil", property: "h", width: 80 }
+      ],
+      rows: tableData
+    }, { x: 50, width: 495, prepareHeader: () => doc.font("Helvetica-Bold").fontSize(9), prepareRow: () => doc.font("Helvetica").fontSize(8), padding: 5 });
+
+    // 4. FOOTER
+    doc.moveDown(2);
+    const dateStr = new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    doc.font('Helvetica-Oblique').fontSize(8).text(`Dicetak secara otomatis pada: ${dateStr} WIB`, 50, doc.y, { align: "left" });
+
+    // Selesaikan PDF
+    doc.end();
+
+  } catch (err) {
+    console.error("[ZIP-PDF-Error]", err);
+  }
+};
+
+
 exports.checkNikDuplikat = async (req, res) => {
   try {
     const { nik } = req.params;
@@ -3437,3 +3780,4 @@ exports.checkNikDuplikat = async (req, res) => {
     return errorResponse(res, "Internal Server Error");
   }
 };
+

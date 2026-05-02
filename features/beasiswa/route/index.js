@@ -67,7 +67,8 @@ const {
   downloadRekapProvinsi,
   getStatusVerifikasiKabkota,
   getKoreksiPendaftar,
-  checkNikDuplikat
+  checkNikDuplikat,
+  downloadPdfHasilVerifikasi
 } = require("../controller");
 const {
   uploadConfigs,
@@ -195,5 +196,6 @@ router.post("/download/bulk-zip", downloadBulkZip);
 router.get("/:idBeasiswa/status-verifikasi-kabkota", getStatusVerifikasiKabkota);
 router.get("/:idTrxBeasiswa/koreksi", getKoreksiPendaftar);
 router.get("/check-nik-duplikat/:nik", checkNikDuplikat);
+router.get("/download-pdf-verifikasi/:idTrxBeasiswa", downloadPdfHasilVerifikasi);
 
 module.exports = router;
