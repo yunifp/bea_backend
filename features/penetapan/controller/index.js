@@ -133,11 +133,19 @@ exports.downloadDataPenetapan = async (req, res) => {
     const data = await TrxBeasiswa.findAll({
       where: whereCondition,
       attributes: [
+        "id_trx_beasiswa",  // ✅ Ditambahkan untuk acuan penentu susulan/awal
         "kode_pendaftaran",
         "nama_lengkap",
-        "nama_kluster",
-        "pt_final",
+        "nik", 
+        "no_hp", 
+        "tinggal_kab_kota", 
+        "tinggal_prov",     
+        "jenjang_final", 
         "prodi_final",
+        "pt_final",
+        "jalur",            
+        "nama_kluster",
+        "jenis_kelamin",
         "urutan_ranking"
       ],
       order: [["urutan_ranking", "ASC"]],
@@ -152,24 +160,63 @@ exports.downloadDataPenetapan = async (req, res) => {
 
     worksheet.columns = [
       { header: "No", key: "no", width: 5 },
-      { header: "Kode Pendaftaran", key: "kode_pendaftaran", width: 20 },
+      { header: "Kode Peserta", key: "kode_pendaftaran", width: 20 },
       { header: "Nama Lengkap", key: "nama_lengkap", width: 35 },
-      { header: "Kluster", key: "nama_kluster", width: 20 },
+      { header: "NIK", key: "nik", width: 20 },
+      { header: "No. HP", key: "no_hp", width: 15 },
+      { header: "Kabupaten/Kota Asal", key: "kabkota", width: 25 },
+      { header: "Provinsi Asal", key: "provinsi", width: 25 },
+      { header: "Program Studi Diterima", key: "prodi_lengkap", width: 40 },
       { header: "Kampus Diterima", key: "pt_final", width: 35 },
-      { header: "Program Studi Diterima", key: "prodi_final", width: 35 },
+      { header: "Jalur", key: "jalur_pendaftaran", width: 20 },
+      { header: "Kluster", key: "nama_kluster", width: 20 },
+      { header: "Jenis Kelamin", key: "jenis_kelamin", width: 15 },
+      { header: "Keterangan", key: "keterangan", width: 25 },
     ];
 
+    // Opsional: Cari ID paling awal untuk dijadikan patokan (baseline)
+    // Jika data tidak kosong, kita ambil ID terkecil sebagai indikator kloter pertama
+    const minId = Math.min(...data.map(d => d.id_trx_beasiswa));
+    
+    // Asumsi: Jika selisih ID dari kloter pertama sangat jauh (misal data baru masuk seminggu kemudian), 
+    // kita anggap itu susulan. 
+    // *Anda bisa mengganti '1000' dengan jarak ID/kuota yang masuk akal menurut sistem Anda.
+    const BATAS_SELISIH_SUSULAN = 1000; 
+
     data.forEach((item, index) => {
+      const prodiLengkap = item.jenjang_final && item.prodi_final 
+        ? `${item.jenjang_final} - ${item.prodi_final}` 
+        : item.prodi_final || item.jenjang_final || "-";
+
+      // ✅ LOGIKA KETERANGAN: Awal vs Susulan
+      let statusRekomtek = "Rekomtek Awal"; // Default
+
+      // Jika suatu saat Anda menambahkan kolom di DB, logikanya cukup: 
+      // statusRekomtek = item.jenis_rekomtek || "Rekomtek Awal";
+
+      // Logika simulasi menggunakan ID:
+      if ((item.id_trx_beasiswa - minId) > BATAS_SELISIH_SUSULAN) {
+         statusRekomtek = "Rekomtek Susulan";
+      }
+
       worksheet.addRow({
         no: index + 1,
-        kode_pendaftaran: item.kode_pendaftaran,
-        nama_lengkap: item.nama_lengkap,
-        nama_kluster: item.nama_kluster,
-        pt_final: item.pt_final,
-        prodi_final: item.prodi_final,
+        kode_pendaftaran: item.kode_pendaftaran || "-",
+        nama_lengkap: item.nama_lengkap || "-",
+        nik: item.nik || "-",
+        no_hp: item.no_hp || "-",
+        kabkota: item.tinggal_kab_kota || "-",
+        provinsi: item.tinggal_prov || "-",
+        prodi_lengkap: prodiLengkap, 
+        pt_final: item.pt_final || "-",
+        jalur_pendaftaran: item.jalur || "-",
+        nama_kluster: item.nama_kluster || "-",
+        jenis_kelamin: item.jenis_kelamin || "-",
+        keterangan: statusRekomtek, // ✅ Masukkan variabel status di sini
       });
     });
 
+    // Styling Header
     worksheet.getRow(1).eachCell((cell) => {
       cell.font = { bold: true };
       cell.fill = {
