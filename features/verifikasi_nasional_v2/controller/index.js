@@ -65,6 +65,7 @@ exports.getRekapProvinsi = async (req, res) => {
 exports.getDetailProvinsi = async (req, res) => {
   try {
     const { kode_dinas_provinsi } = req.params;
+    // ✅ Menangkap parameter filter kode_kabkota (dari query frontend)
     const { page = 1, limit = 10, search = "", kode_kabkota } = req.query;
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
@@ -74,6 +75,7 @@ exports.getDetailProvinsi = async (req, res) => {
       kode_dinas_provinsi: kode_dinas_provinsi
     };
 
+    // ✅ Jika user klik kabupaten di frontend, saring berdasarkan kabupaten
     if (kode_kabkota && kode_kabkota !== "all") {
       whereCondition.kode_dinas_kabkota = kode_kabkota;
     }
@@ -289,7 +291,7 @@ exports.getDokumenProvinsi = async (req, res) => {
     if (latestBa && latestBa.filename) {
       formattedBa.push({
         ...latestBa,
-        file_url: await getFileUrl(req, "berita_acara", latestBa.filename) // Menambahkan await di sini
+        file_url: getFileUrl(req, "berita_acara", latestBa.filename)
       });
     }
 
@@ -297,7 +299,7 @@ exports.getDokumenProvinsi = async (req, res) => {
     if (latestSk && latestSk.filename) {
       formattedSk.push({
         ...latestSk,
-        file_url: await getFileUrl(req, "persyaratan", latestSk.filename) // Menambahkan await di sini
+        file_url: getFileUrl(req, "persyaratan", latestSk.filename) 
       });
     }
 
@@ -311,6 +313,7 @@ exports.getDokumenProvinsi = async (req, res) => {
   }
 };
 
+// ✅ TAMBAHAN: REKAP KABUPATEN/KOTA UNTUK SATU PROVINSI
 exports.getRekapKabkotaByProvinsi = async (req, res) => {
   try {
     const { kode_dinas_provinsi } = req.params;
@@ -351,6 +354,7 @@ exports.getRekapKabkotaByProvinsi = async (req, res) => {
   }
 };
 
+// ✅ TAMBAHAN: MENDAPATKAN DOKUMEN BA & SK KABUPATEN/KOTA
 exports.getDokumenKabkota = async (req, res) => {
   try {
     const { kode_dinas_kabkota } = req.params;
@@ -378,7 +382,7 @@ exports.getDokumenKabkota = async (req, res) => {
     if (latestBa && latestBa.filename) {
       formattedBa.push({
         ...latestBa,
-        file_url: await getFileUrl(req, "berita_acara", latestBa.filename) // Menambahkan await di sini
+        file_url: getFileUrl(req, "berita_acara", latestBa.filename)
       });
     }
 
@@ -386,7 +390,7 @@ exports.getDokumenKabkota = async (req, res) => {
     if (latestSk && latestSk.filename) {
       formattedSk.push({
         ...latestSk,
-        file_url: await getFileUrl(req, "persyaratan", latestSk.filename) // Menambahkan await di sini
+        file_url: getFileUrl(req, "persyaratan", latestSk.filename) 
       });
     }
 

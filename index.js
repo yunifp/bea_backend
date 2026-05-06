@@ -1,5 +1,3 @@
-require("dotenv").config();
-
 const express = require("express");
 const helmet = require("helmet");
 const cors = require("cors");
@@ -12,7 +10,8 @@ const cekDataController = require("./features/cek_data/controller");
 const { verifyApiKey } = require("./common/middleware/apiKey_middleware");
 const penetapanController = require("./features/penetapan/controller");
 const referensiPublicRoute = require("./features/testing_server/route");
-const { streamS3File } = require("./common/middleware/upload_middleware");
+
+require("dotenv").config();
 
 const app = express();
 app.set("trust proxy", true);
@@ -31,8 +30,6 @@ app.use(
 );
 
 app.use("/uploads", express.static(process.env.FILE_URL || "E:/upload_palma"));
-
-app.get("/api/files/stream", streamS3File);
 
 app.get(
   "/api/penetapan/external/mahasiswa-final",

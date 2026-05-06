@@ -32,26 +32,63 @@ const path = require("path");
 const fs = require("fs");
 const { sendNotificationToQueue } = require("../../../utils/notification");
 
+// ✅ TAMBAHAN: AWS SDK dengan fitur High Availability (Primary & Secondary Endpoint)
 const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
 const storageType = process.env.DATABASE_PENYIMPANAN || "biasa";
 
-// ✅ FIX 1: Gunakan Variabel Environment yang Sesuai dengan .env Anda (AWS S3)
-const s3Endpoint = process.env.S3_ENDPOINT;
-const UPLOAD_BUCKET = process.env.S3_BUCKET_NAME;
+const primaryEndpoint = process.env.NEO_ENDPOINT || "https://nos.wjv-1.neo.id";
+const secondaryEndpoint = process.env.NEO_ENDPOINT_SECONDARY || "https://nos.jkt-1.neo.id";
 
-let s3Client = null;
+let s3Proxy = null;
+let currentS3Client = null;
+let primaryClient = null;
+let secondaryClient = null;
+const UPLOAD_BUCKET = process.env.NEO_BUCKET_UPLOAD;
 
 if (storageType === "s3") {
-  s3Client = new S3Client({
-    region: process.env.S3_REGION,
+  const s3Config = {
+    region: process.env.NEO_REGION || "wjv-1",
     credentials: {
-      accessKeyId: process.env.S3_ACCESS_KEY,
-      secretAccessKey: process.env.S3_SECRET_KEY,
+      accessKeyId: process.env.NEO_ACCESS_KEY,
+      secretAccessKey: process.env.NEO_SECRET_KEY,
     },
-    endpoint: s3Endpoint,
     forcePathStyle: true,
+  };
+
+  primaryClient = new S3Client({ ...s3Config, endpoint: primaryEndpoint });
+  secondaryClient = new S3Client({ ...s3Config, endpoint: secondaryEndpoint });
+
+  currentS3Client = primaryClient;
+
+  s3Proxy = new Proxy({}, {
+    get: (target, prop) => {
+      if (typeof currentS3Client[prop] === "function") {
+        return currentS3Client[prop].bind(currentS3Client);
+      }
+      return currentS3Client[prop];
+    }
   });
 }
+
+// ✅ FIX: Pembatasan Pengecekan Endpoint agar tidak Self-DDoS saat Bulk Download
+let lastEndpointCheck = 0;
+const checkAndSwitchEndpoint = async () => {
+  if (storageType !== "s3") return;
+  
+  const now = Date.now();
+  // Hanya lakukan ping maksimal 1 kali setiap 30 detik
+  if (now - lastEndpointCheck < 30000) return; 
+
+  try {
+    await axios.get(primaryEndpoint, { timeout: 3000 });
+    currentS3Client = primaryClient;
+    lastEndpointCheck = now;
+  } catch (error) {
+    console.warn(`[S3 ZIP Failover] Primary Down! Beralih ke Secondary Endpoint (${secondaryEndpoint}).`);
+    currentS3Client = secondaryClient;
+    lastEndpointCheck = now;
+  }
+};
 
 const baseUploadDir = process.env.FILE_URL;
 
@@ -65,38 +102,33 @@ const FOLDER_MAP = {
   berita_acara: "berita_acara",
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Utils
+// ─────────────────────────────────────────────────────────────────────────────
+
 const resolveFilePath = (folderKey, filename) => {
   const folder = FOLDER_MAP[folderKey] ?? folderKey;
   return path.join(baseUploadDir, folder, filename);
 };
 
-// ✅ FIX 2: Stream to Buffer untuk mencegah ZIP rusak/kosong
-const streamToBuffer = (stream) => {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    stream.on("data", (chunk) => chunks.push(chunk));
-    stream.on("error", reject);
-    stream.on("end", () => resolve(Buffer.concat(chunks)));
-  });
-};
-
+// ✅ FIX: Pembersihan URL otomatis dan proteksi koneksi
 const addFileToArchive = async (archive, folderKey, filename, archivePath) => {
   if (!filename) return;
 
   if (storageType === "s3") {
     try {
+      await checkAndSwitchEndpoint();
+
       const folder = FOLDER_MAP[folderKey] ?? folderKey;
       let key = filename;
       
-      // Amankan key agar bersih dari nama host jika tersimpan sebagai full url
+      // Mengamankan key jika filename tersimpan sebagai Full URL (http...) di database lama
       if (key.startsWith("http")) {
         try {
           const urlObj = new URL(key);
-          let pathname = urlObj.pathname.replace(/^\/+/, '');
-          const pathParts = pathname.split('/').filter(Boolean);
-          // Hapus nama bucket dari path jika ada
+          const pathParts = urlObj.pathname.split('/').filter(Boolean);
           if (pathParts[0] === UPLOAD_BUCKET) {
-              pathParts.shift(); 
+              pathParts.shift(); // Buang nama bucket dari path
           }
           key = pathParts.join('/');
         } catch (e) {}
@@ -104,24 +136,17 @@ const addFileToArchive = async (archive, folderKey, filename, archivePath) => {
          key = `${folder}/${filename}`;
       }
       
-      // Hapus leading slash jika masih ada (penyebab S3 tidak menemukan file)
-      key = key.replace(/^\/+/, '');
-
       const command = new GetObjectCommand({
         Bucket: UPLOAD_BUCKET,
         Key: key,
       });
-      
-      const response = await s3Client.send(command); 
-      
-      // Mengonversi response body ke buffer sebelum di append ke zip
-      const fileBuffer = await streamToBuffer(response.Body);
-      archive.append(fileBuffer, { name: archivePath });
+      const response = await s3Proxy.send(command); 
+      archive.append(response.Body, { name: archivePath });
     } catch (error) {
       console.warn(`[ZIP S3] File tidak ditemukan atau error, dilewati: ${filename}`);
-      console.error("ALASAN ERROR S3:", error.message); // Memunculkan alasan error asli di terminal
     }
   } else {
+    // Mode Lokal
     const fullPath = resolveFilePath(folderKey, filename);
     if (fs.existsSync(fullPath)) {
       archive.file(fullPath, { name: archivePath });
@@ -141,6 +166,9 @@ const safeDocName = (nama, id, maxLen = 50) =>
     .substring(0, maxLen)
     .trim();
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: foto
+// ─────────────────────────────────────────────────────────────────────────────
 const FOTO_FIELDS = [
   { field: "foto", label: "foto_wajah" },
   { field: "foto_depan", label: "foto_depan" },
@@ -158,7 +186,7 @@ const addFotoToArchive = async (archive, data, folderPrefix) => {
         archive,
         field,                                  
         data[field],                            
-        `${folderPrefix}/foto/${kodePendaftaran} - ${label}${ext}` 
+        `${folderPrefix}/foto/${kodePendaftaran} - ${label}${ext}` // <--- Format diubah di sini
       );
     }
   }
@@ -185,11 +213,14 @@ const addDokumenUmumToArchive = async (archive, idTrxBeasiswa, folderPrefix, map
       archive,
       "persyaratan",                                         
       dok.file,
-      `${folderPrefix}/dokumen_umum/${kodePendaftaran} - ${nameSafe}${ext}` 
+      `${folderPrefix}/dokumen_umum/${kodePendaftaran} - ${nameSafe}${ext}` // <--- Format diubah di sini
     );
   }
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: dokumen khusus
+// ─────────────────────────────────────────────────────────────────────────────
 const addDokumenKhususToArchive = async (archive, idTrxBeasiswa, folderPrefix, mapRefKhusus = {}, kodePendaftaran = "Tanpa-No") => {
   const dokList = await TrxDokumenKhusus.findAll({
     where: { id_trx_beasiswa: idTrxBeasiswa },
@@ -210,134 +241,40 @@ const addDokumenKhususToArchive = async (archive, idTrxBeasiswa, folderPrefix, m
       archive,
       "persyaratan",
       dok.file,
-      `${folderPrefix}/dokumen_khusus/${kodePendaftaran} - ${nameSafe}${ext}` 
+      `${folderPrefix}/dokumen_khusus/${kodePendaftaran} - ${nameSafe}${ext}` // <--- Format diubah di sini
     );
   }
 };
-
-const addHasilSeleksiPdfToArchive = async (archive, data, folderPrefix, mapRefUmum, mapRefKhusus) => {
-  try {
-    const idTrxBeasiswa = data.id_trx_beasiswa;
-    const kodePendaftaran = data.kode_pendaftaran || "Tanpa-No";
-
-    const dokUmum = await TrxDokumenUmum.findAll({ where: { id_trx_beasiswa } });
-    const dokKhusus = await TrxDokumenKhusus.findAll({ where: { id_trx_beasiswa } });
-
-    const doc = new PDFDocument({ 
-      margins: { top: 50, bottom: 50, left: 50, right: 50 }, 
-      size: 'A4' 
-    });
-
-    archive.append(doc, { name: `${folderPrefix}/${kodePendaftaran} - Hasil Seleksi Administrasi.pdf` });
-
-    const logoPath = path.join(__dirname, '../../../assets/Ditjenbun.png');
-    if (fs.existsSync(logoPath)) {
-      doc.image(logoPath, 50, 40, { width: 120 });
-    } else {
-      doc.rect(50, 40, 120, 50).dash(5, {space: 5}).stroke(); 
-      doc.undash();
-    }
-
-    doc.font('Helvetica-Bold').fontSize(11)
-       .text("BEASISWA PENGEMBANGAN SUMBER DAYA MANUSIA", 180, 45, { align: 'center', width: 365 })
-       .text("PERKEBUNAN KELAPA SAWIT", { align: 'center', width: 365 })
-       .text("2026", { align: 'center', width: 365 });
-
-    doc.moveDown(2);
-    doc.font('Helvetica-Bold').fontSize(12)
-       .text("HASIL SELEKSI ADMINISTRASI", 50, doc.y, { align: 'center', width: 495 });
-    
-    doc.moveDown(1.5);
-
-    doc.fontSize(9);
-    const startX1 = 50, col1ValX = 160, col1ValW = 140;
-    const startX2 = 310, col2ValX = 410, col2ValW = 135;
-
-    const printRow2Col = (label1, val1, label2, val2) => {
-      const y = doc.y;
-      const h1 = doc.heightOfString(val1 || '-', {width: col1ValW});
-      const h2 = label2 ? doc.heightOfString(val2 || '-', {width: col2ValW}) : 0;
-      const maxH = Math.max(h1, h2, 10);
-
-      doc.font('Helvetica-Bold').text(label1, startX1, y, { width: 100 });
-      doc.text(':', col1ValX - 10, y, { width: 10, align: 'center' });
-      doc.font('Helvetica').text(val1 || '-', col1ValX, y, { width: col1ValW });
-
-      if (label2) {
-        doc.font('Helvetica-Bold').text(label2, startX2, y, { width: 90 });
-        doc.text(':', col2ValX - 10, y, { width: 10, align: 'center' });
-        doc.font('Helvetica').text(val2 || '-', col2ValX, y, { width: col2ValW });
-      }
-      doc.y = y + maxH + 5; 
-    };
-
-    printRow2Col("Kode Pendaftar", data.kode_pendaftaran, "Nama Ayah", data.ayah_nama);
-    printRow2Col("Nama Pendaftar", data.nama_lengkap, "No. Telepon Ayah", data.ayah_no_hp);
-    printRow2Col("NIK", data.nik, "Nama Ibu", data.ibu_nama);
-    printRow2Col("Periode", data.nama_beasiswa, "No. Telepon Ibu", data.ibu_no_hp);
-    printRow2Col("Kategori", data.jalur, null, null);
-    printRow2Col("Nomor Telepon", data.no_hp, null, null);
-    printRow2Col("Alamat KTP", data.tinggal_alamat, null, null);
-    printRow2Col("Alamat Kerja", data.kerja_alamat, null, null);
-
-    doc.moveDown(1.5);
-
-    const tableData = [];
-    let no = 1;
-    const processRows = (list, isKhusus) => {
-      list.forEach(dok => {
-        let status = (dok.status_verifikasi || "Belum Diverifikasi").toUpperCase();
-        let refName = isKhusus ? mapRefKhusus[dok.id_ref_dokumen] : mapRefUmum[dok.id_ref_dokumen];
-        let ext = path.extname(dok.file || "");
-        let nameFinal = refName ? (refName.includes('.') ? refName : `${refName}${ext}`) : (dok.file ? String(dok.file).split('/').pop() : "-");
-        tableData.push([String(no++), dok.nama_dokumen_persyaratan || "-", nameFinal, status]);
-      });
-    };
-    processRows(dokUmum, false);
-    processRows(dokKhusus, true);
-
-    await doc.table({
-      headers: [
-        { label: "No.", property: "no", width: 25 }, 
-        { label: "Syarat", property: "s", width: 260 }, 
-        { label: "Dokumen", property: "d", width: 130 }, 
-        { label: "Hasil", property: "h", width: 80 }
-      ],
-      rows: tableData
-    }, { x: 50, width: 495, prepareHeader: () => doc.font("Helvetica-Bold").fontSize(9), prepareRow: () => doc.font("Helvetica").fontSize(8), padding: 5 });
-
-    doc.moveDown(2);
-    const dateStr = new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-    doc.font('Helvetica-Oblique').fontSize(8).text(`Dicetak secara otomatis pada: ${dateStr} WIB`, 50, doc.y, { align: "left" });
-
-    doc.end();
-
-  } catch (err) {
-    console.error("[ZIP-PDF-Error]", err);
-  }
-};
-
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: gabungkan sesuai kategori
+// ─────────────────────────────────────────────────────────────────────────────
 const addDokumenByKategori = async (archive, data, folderPrefix, kategori, mapRefUmum = {}, mapRefKhusus = {}) => {
   const k = kategori || "all";
   const kodePendaftaran = data.kode_pendaftaran || "Tanpa-No";
   
+  // 1. Tambahkan PDF Hasil Seleksi (Hanya jika kategori "all" atau "dokumen_umum")
   if (k === "all" || k === "dokumen_umum") {
     await addHasilSeleksiPdfToArchive(archive, data, folderPrefix, mapRefUmum, mapRefKhusus);
   }
 
+  // 2. Tambahkan Foto
   if (k === "all" || k === "foto") {
     await addFotoToArchive(archive, data, folderPrefix);
   }
 
+  // 3. Tambahkan Dokumen Umum
   if (k === "all" || k === "dokumen_umum") {
     await addDokumenUmumToArchive(archive, data.id_trx_beasiswa, folderPrefix, mapRefUmum, kodePendaftaran);
   }
 
+  // 4. Tambahkan Dokumen Khusus
   if (k === "all" || k === "dokumen_khusus") {
     await addDokumenKhususToArchive(archive, data.id_trx_beasiswa, folderPrefix, mapRefKhusus, kodePendaftaran);
   }
 };
-
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared: setup header + archiver + pipe ke res
+// ─────────────────────────────────────────────────────────────────────────────
 const createZipResponse = (res, filename) => {
   res.setTimeout(0);
 
@@ -369,6 +306,7 @@ const createZipResponse = (res, filename) => {
 
   return archive;
 };
+
 
 const buildWilayahFilter = ({ kode_prov, kode_kab }) => {
   const filter = {};
@@ -637,17 +575,17 @@ exports.getTransaksiBeasiswaByPaginationSeleksiAdministrasi = async (req, res) =
       order: [["id_trx_beasiswa", "ASC"]],
     });
 
-    const mappedRows = await Promise.all(rows.map(async (item) => {
+    const mappedRows = rows.map((item) => {
       const json = item.toJSON();
       return {
         ...json,
-        foto: json.foto ? await getFileUrl(req, "foto", json.foto) : null,
-        foto_depan: json.foto_depan ? await getFileUrl(req, "foto_depan", json.foto_depan) : null,
-        foto_samping_kiri: json.foto_samping_kiri ? await getFileUrl(req, "foto_samping_kiri", json.foto_samping_kiri) : null,
-        foto_samping_kanan: json.foto_samping_kanan ? await getFileUrl(req, "foto_samping_kanan", json.foto_samping_kanan) : null,
-        foto_belakang: json.foto_belakang ? await getFileUrl(req, "foto_belakang", json.foto_belakang) : null,
+        foto: json.foto ? getFileUrl(req, "foto", json.foto) : null,
+        foto_depan: json.foto_depan ? getFileUrl(req, "foto_depan", json.foto_depan) : null,
+        foto_samping_kiri: json.foto_samping_kiri ? getFileUrl(req, "foto_samping_kiri", json.foto_samping_kiri) : null,
+        foto_samping_kanan: json.foto_samping_kanan ? getFileUrl(req, "foto_samping_kanan", json.foto_samping_kanan) : null,
+        foto_belakang: json.foto_belakang ? getFileUrl(req, "foto_belakang", json.foto_belakang) : null,
       };
-    }));
+    });
 
     return successResponse(res, "Data berhasil dimuat", {
       result: mappedRows,
@@ -672,6 +610,7 @@ exports.getTransaksiBeasiswaByPaginationSeleksiAdministrasiDaerah = async (req, 
     const kabkota = req.query.kodeKabkota || "";
     const dinas = req.query.Dinas || "";
     
+    // ✅ Tangkap parameter filter baru
     const idFlow = req.query.idFlow || "all";
     const idJalur = req.query.idJalur || "all";
 
@@ -685,10 +624,12 @@ exports.getTransaksiBeasiswaByPaginationSeleksiAdministrasiDaerah = async (req, 
       baseCondition.kode_dinas_provinsi = provinsi;
     }
 
+    // ✅ Perbaikan logika id_flow (Gunakan Op.notIn)
     if (dinas === "kabkota" || dinas === "provinsi") {
       baseCondition.id_flow = { [Op.notIn]: [0, 1, 2] };
     }
 
+    // ✅ Terapkan Filter Status (Flow)
     if (idFlow !== "all") {
       const ADMIN_LULUS_FLOWS = [6, 7, 9, 10, 11, 12, 13, 17];
       if (idFlow === "lulus") {
@@ -700,6 +641,7 @@ exports.getTransaksiBeasiswaByPaginationSeleksiAdministrasiDaerah = async (req, 
       }
     }
 
+    // ✅ Terapkan Filter Jalur
     if (idJalur !== "all") {
       baseCondition.id_jalur = Number(idJalur);
     }
@@ -722,17 +664,17 @@ exports.getTransaksiBeasiswaByPaginationSeleksiAdministrasiDaerah = async (req, 
       order: [["id_trx_beasiswa", "ASC"]],
     });
 
-    const mappedRows = await Promise.all(rows.map(async (item) => {
+    const mappedRows = rows.map((item) => {
       const json = item.toJSON();
       return {
         ...json,
-        foto: json.foto ? await getFileUrl(req, "foto", json.foto) : null,
-        foto_depan: json.foto_depan ? await getFileUrl(req, "foto_depan", json.foto_depan) : null,
-        foto_samping_kiri: json.foto_samping_kiri ? await getFileUrl(req, "foto_samping_kiri", json.foto_samping_kiri) : null,
-        foto_samping_kanan: json.foto_samping_kanan ? await getFileUrl(req, "foto_samping_kanan", json.foto_samping_kanan) : null,
-        foto_belakang: json.foto_belakang ? await getFileUrl(req, "foto_belakang", json.foto_belakang) : null,
+        foto: json.foto ? getFileUrl(req, "foto", json.foto) : null,
+        foto_depan: json.foto_depan ? getFileUrl(req, "foto_depan", json.foto_depan) : null,
+        foto_samping_kiri: json.foto_samping_kiri ? getFileUrl(req, "foto_samping_kiri", json.foto_samping_kiri) : null,
+        foto_samping_kanan: json.foto_samping_kanan ? getFileUrl(req, "foto_samping_kanan", json.foto_samping_kanan) : null,
+        foto_belakang: json.foto_belakang ? getFileUrl(req, "foto_belakang", json.foto_belakang) : null,
       };
-    }));
+    });
 
     return successResponse(res, "Data berhasil dimuat", {
       result: mappedRows,
@@ -816,19 +758,19 @@ exports.createInitialTransaksi = async (req, res) => {
     }
 
     if (transaksi.foto) {
-      transaksi.foto = await getFileUrl(req, "foto", transaksi.foto);
+      transaksi.foto = getFileUrl(req, "foto", transaksi.foto);
     }
     if (transaksi.foto_depan) {
-      transaksi.foto_depan = await getFileUrl(req, "foto_depan", transaksi.foto_depan);
+      transaksi.foto_depan = getFileUrl(req, "foto_depan", transaksi.foto_depan);
     }
     if (transaksi.foto_belakang) {
-      transaksi.foto_belakang = await getFileUrl(req, "foto_belakang", transaksi.foto_belakang);
+      transaksi.foto_belakang = getFileUrl(req, "foto_belakang", transaksi.foto_belakang);
     }
     if (transaksi.foto_samping_kanan) {
-      transaksi.foto_samping_kanan = await getFileUrl(req, "foto_samping_kanan", transaksi.foto_samping_kanan);
+      transaksi.foto_samping_kanan = getFileUrl(req, "foto_samping_kanan", transaksi.foto_samping_kanan);
     }
     if (transaksi.foto_samping_kiri) {
-      transaksi.foto_samping_kiri = await getFileUrl(req, "foto_samping_kiri", transaksi.foto_samping_kiri);
+      transaksi.foto_samping_kiri = getFileUrl(req, "foto_samping_kiri", transaksi.foto_samping_kiri);
     }
 
     const pilihanProgramStudi = await TrxPilihanProgramStudi.findAll({
@@ -850,6 +792,7 @@ exports.createInitialTransaksi = async (req, res) => {
     return res.status(500).json(errorResponse("Internal Server Error"));
   }
 };
+
 
 exports.getFullDataBeasiswa = async (req, res) => {
   try {
@@ -875,20 +818,20 @@ exports.getFullDataBeasiswa = async (req, res) => {
       where: { id_trx_beasiswa: idTrxBeasiswa },
     });
 
-    const mappedPersyaratanUmum = await Promise.all(persyaratanUmum.map(async (item) => ({
+    const mappedPersyaratanUmum = persyaratanUmum.map((item) => ({
       ...item.toJSON(),
-      file: await getFileUrl(req, "persyaratan", item.file),
-    })));
+      file: getFileUrl(req, "persyaratan", item.file),
+    }));
 
-    const mappedPersyaratanKhusus = await Promise.all(persyaratanKhusus.map(async (item) => ({
+    const mappedPersyaratanKhusus = persyaratanKhusus.map((item) => ({
       ...item.toJSON(),
-      file: await getFileUrl(req, "persyaratan", item.file),
-    })));
+      file: getFileUrl(req, "persyaratan", item.file),
+    }));
 
-    const mappedPersyaratanDinas = await Promise.all(persyaratanDinas.map(async (item) => ({
+    const mappedPersyaratanDinas = persyaratanDinas.map((item) => ({
       ...item.toJSON(),
-      file: await getFileUrl(req, "persyaratan", item.file),
-    })));
+      file: getFileUrl(req, "persyaratan", item.file),
+    }));
 
     const pilihanProgramStudi = await TrxPilihanProgramStudi.findAll({
       where: { id_trx_beasiswa: idTrxBeasiswa },
@@ -897,16 +840,16 @@ exports.getFullDataBeasiswa = async (req, res) => {
     const beasiswaData = trxBeasiswa.toJSON();
 
     if (beasiswaData.foto) {
-      beasiswaData.foto = await getFileUrl(req, "foto", beasiswaData.foto);
+      beasiswaData.foto = getFileUrl(req, "foto", beasiswaData.foto);
     }
     if (beasiswaData.foto_depan)
-      beasiswaData.foto_depan = await getFileUrl(req, "foto_depan", beasiswaData.foto_depan);
+      beasiswaData.foto_depan = getFileUrl(req, "foto_depan", beasiswaData.foto_depan);
     if (beasiswaData.foto_samping_kiri)
-      beasiswaData.foto_samping_kiri = await getFileUrl(req, "foto_samping_kiri", beasiswaData.foto_samping_kiri);
+      beasiswaData.foto_samping_kiri = getFileUrl(req, "foto_samping_kiri", beasiswaData.foto_samping_kiri);
     if (beasiswaData.foto_samping_kanan)
-      beasiswaData.foto_samping_kanan = await getFileUrl(req, "foto_samping_kanan", beasiswaData.foto_samping_kanan);
+      beasiswaData.foto_samping_kanan = getFileUrl(req, "foto_samping_kanan", beasiswaData.foto_samping_kanan);
     if (beasiswaData.foto_belakang)
-      beasiswaData.foto_belakang = await getFileUrl(req, "foto_belakang", beasiswaData.foto_belakang);
+      beasiswaData.foto_belakang = getFileUrl(req, "foto_belakang", beasiswaData.foto_belakang);
 
     beasiswaData.pilihan_program_studi = pilihanProgramStudi.map((item) => item.toJSON());
 
@@ -2246,20 +2189,13 @@ exports.getSkKabkotaByProvinsi = async (req, res) => {
       order: [["created_at", "DESC"]],
     });
 
-    const mappedSkList = await Promise.all(
-      skList.map(async (item) => {
-        const data = item.toJSON();
-        data.filename = await getFileUrl(req, "berita_acara", data.filename);
-        return data;
-      })
-    );
-
-    return successResponse(res, "Data berhasil dimuat", mappedSkList);
+    return successResponse(res, "Data berhasil dimuat", skList);
   } catch (error) {
     console.error(error);
     return errorResponse(res, "Internal Server Error");
   }
 };
+
 exports.getPendaftarByProvinsi = async (req, res) => {
   try {
     const { beasiswaId } = req.params;
@@ -2366,15 +2302,7 @@ exports.getBAKabkota = async (req, res) => {
       order: [["created_at", "DESC"]],
     });
 
-    const mappedResult = await Promise.all(
-      result.map(async (item) => {
-        const data = item.toJSON();
-        data.filename = await getFileUrl(req, "berita_acara", data.filename);
-        return data;
-      })
-    );
-
-    return successResponse(res, "Data berhasil dimuat", mappedResult);
+    return successResponse(res, "Data berhasil dimuat", result);
   } catch (error) {
     console.error(error);
     return errorResponse(res, "Internal Server Error");
@@ -2386,20 +2314,12 @@ exports.getBaKabkotaByProvinsi = async (req, res) => {
     const { idBeasiswa } = req.params;
     const { kode_prov } = req.user;
 
-    const baList = await TrxBaDinasKabkota.findAll({
+    const skList = await TrxBaDinasKabkota.findAll({
       where: { kode_dinas_provinsi: kode_prov },
       order: [["created_at", "DESC"]],
     });
 
-    const mappedBaList = await Promise.all(
-      baList.map(async (item) => {
-        const data = item.toJSON();
-        data.filename = await getFileUrl(req, "berita_acara", data.filename);
-        return data;
-      })
-    );
-
-    return successResponse(res, "Data berhasil dimuat", mappedBaList);
+    return successResponse(res, "Data berhasil dimuat", skList);
   } catch (error) {
     console.error(error);
     return errorResponse(res, "Internal Server Error");
@@ -2477,13 +2397,13 @@ exports.getPendaftarForAssignment = async (req, res) => {
     for (const d of dokUmumAll) {
       if (!umumMap[d.id_trx_beasiswa]) umumMap[d.id_trx_beasiswa] = [];
       umumMap[d.id_trx_beasiswa].push({
-        id: d.id, nama_dokumen_persyaratan: d.nama_dokumen_persyaratan, file: await getFileUrl(req, "persyaratan", d.file), status_verifikasi: d.status_verifikasi,
+        id: d.id, nama_dokumen_persyaratan: d.nama_dokumen_persyaratan, file: getFileUrl(req, "persyaratan", d.file), status_verifikasi: d.status_verifikasi,
       });
     }
     for (const d of dokKhususAll) {
       if (!khususMap[d.id_trx_beasiswa]) khususMap[d.id_trx_beasiswa] = [];
       khususMap[d.id_trx_beasiswa].push({
-        id: d.id, nama_dokumen_persyaratan: d.nama_dokumen_persyaratan, file: await getFileUrl(req, "persyaratan", d.file), status_verifikasi: d.status_verifikasi,
+        id: d.id, nama_dokumen_persyaratan: d.nama_dokumen_persyaratan, file: getFileUrl(req, "persyaratan", d.file), status_verifikasi: d.status_verifikasi,
       });
     }
 
@@ -2749,11 +2669,11 @@ exports.getDetailPenetapan = async (req, res) => {
 
     const beasiswaData = trxBeasiswa.toJSON();
 
-    if (beasiswaData.foto) beasiswaData.foto = await getFileUrl(req, "foto", beasiswaData.foto);
-    if (beasiswaData.foto_depan) beasiswaData.foto_depan = await getFileUrl(req, "foto_depan", beasiswaData.foto_depan);
-    if (beasiswaData.foto_samping_kiri) beasiswaData.foto_samping_kiri = await getFileUrl(req, "foto_samping_kiri", beasiswaData.foto_samping_kiri);
-    if (beasiswaData.foto_samping_kanan) beasiswaData.foto_samping_kanan = await getFileUrl(req, "foto_samping_kanan", beasiswaData.foto_samping_kanan);
-    if (beasiswaData.foto_belakang) beasiswaData.foto_belakang = await getFileUrl(req, "foto_belakang", beasiswaData.foto_belakang);
+    if (beasiswaData.foto) beasiswaData.foto = getFileUrl(req, "foto", beasiswaData.foto);
+    if (beasiswaData.foto_depan) beasiswaData.foto_depan = getFileUrl(req, "foto_depan", beasiswaData.foto_depan);
+    if (beasiswaData.foto_samping_kiri) beasiswaData.foto_samping_kiri = getFileUrl(req, "foto_samping_kiri", beasiswaData.foto_samping_kiri);
+    if (beasiswaData.foto_samping_kanan) beasiswaData.foto_samping_kanan = getFileUrl(req, "foto_samping_kanan", beasiswaData.foto_samping_kanan);
+    if (beasiswaData.foto_belakang) beasiswaData.foto_belakang = getFileUrl(req, "foto_belakang", beasiswaData.foto_belakang);
 
     const pilihanProdi = await TrxPilihanProgramStudi.findAll({
       where: { id_trx_beasiswa: idTrxBeasiswa }, order: [["id", "ASC"]],
@@ -2766,12 +2686,12 @@ exports.getDetailPenetapan = async (req, res) => {
       TrxDokumenDinasDaerah.findAll({ where: { id_trx_beasiswa: idTrxBeasiswa } }),
     ]);
 
-    const mapDok = async (list) => await Promise.all(list.map(async (item) => ({
-      ...item.toJSON(), file: item.file ? await getFileUrl(req, "persyaratan", item.file) : null,
-    })));
+    const mapDok = (list) => list.map((item) => ({
+      ...item.toJSON(), file: item.file ? getFileUrl(req, "persyaratan", item.file) : null,
+    }));
 
     return successResponse(res, "Data berhasil dimuat", {
-      data_beasiswa: beasiswaData, persyaratan_umum: await mapDok(dokUmum), persyaratan_khusus: await mapDok(dokKhusus), persyaratan_dinas: await mapDok(dokDinas),
+      data_beasiswa: beasiswaData, persyaratan_umum: mapDok(dokUmum), persyaratan_khusus: mapDok(dokKhusus), persyaratan_dinas: mapDok(dokDinas),
     });
   } catch (error) {
     console.error("Error getDetailPenetapan:", error);
@@ -3406,9 +3326,11 @@ exports.downloadPendaftarZip = async (req, res) => {
 
     if (!trx) return res.status(404).json({ message: "Data tidak ditemukan" });
 
+    // === RAW QUERY KE DATABASE MASTER ===
     const [refUmum] = await sequelizeMaster.query("SELECT id, nama_file_unduh FROM ref_syarat_umum_beasiswa");
     const [refKhusus] = await sequelizeMaster.query("SELECT id, nama_file_unduh FROM ref_syarat_khusus_beasiswa");
     
+    // Mapping agar cepat saat di-looping
     const mapRefUmum = refUmum.reduce((acc, curr) => { acc[curr.id] = curr.nama_file_unduh; return acc; }, {});
     const mapRefKhusus = refKhusus.reduce((acc, curr) => { acc[curr.id] = curr.nama_file_unduh; return acc; }, {});
 
@@ -3418,6 +3340,7 @@ exports.downloadPendaftarZip = async (req, res) => {
 
     const archive = createZipResponse(res, zipFilename);
     
+    // Oper mapping ke helper zip
     await addDokumenByKategori(archive, data, folderName, kategori, mapRefUmum, mapRefKhusus); 
     
     await archive.finalize();
@@ -3446,6 +3369,7 @@ exports.downloadBulkZip = async (req, res) => {
 
     if (rows.length === 0) return res.status(404).json({ message: "Tidak ada data ditemukan" });
 
+    // === RAW QUERY KE DATABASE MASTER SEKALI SAJA ===
     const [refUmum] = await sequelizeMaster.query("SELECT id, nama_file_unduh FROM ref_syarat_umum_beasiswa");
     const [refKhusus] = await sequelizeMaster.query("SELECT id, nama_file_unduh FROM ref_syarat_khusus_beasiswa");
     
@@ -3543,12 +3467,14 @@ exports.downloadPdfHasilVerifikasi = async (req, res) => {
     const dokUmum = await TrxDokumenUmum.findAll({ where: { id_trx_beasiswa: idTrxBeasiswa } });
     const dokKhusus = await TrxDokumenKhusus.findAll({ where: { id_trx_beasiswa: idTrxBeasiswa } });
 
+    // === RAW QUERY KE MASTER UNTUK MENDAPATKAN NAMA TEMPLATE ===
     const [refUmum] = await sequelizeMaster.query("SELECT id, nama_file_unduh FROM ref_syarat_umum_beasiswa");
     const [refKhusus] = await sequelizeMaster.query("SELECT id, nama_file_unduh FROM ref_syarat_khusus_beasiswa");
 
     const mapRefUmum = refUmum.reduce((acc, curr) => { acc[curr.id] = curr.nama_file_unduh; return acc; }, {});
     const mapRefKhusus = refKhusus.reduce((acc, curr) => { acc[curr.id] = curr.nama_file_unduh; return acc; }, {});
 
+    // Setup dokumen PDF dengan margin 50
     const doc = new PDFDocument({ 
       margins: { top: 50, bottom: 50, left: 50, right: 50 }, 
       size: 'A4' 
@@ -3562,6 +3488,7 @@ exports.downloadPdfHasilVerifikasi = async (req, res) => {
 
     doc.pipe(res);
 
+    // 1. KOP SURAT / HEADER
     const logoPath = path.join(__dirname, '../../../assets/Ditjenbun.png');
     
     if (fs.existsSync(logoPath)) {
@@ -3571,6 +3498,7 @@ exports.downloadPdfHasilVerifikasi = async (req, res) => {
       doc.undash();
     }
 
+    // Teks Kop Surat (Di sebelah kanan logo)
     doc.font('Helvetica-Bold').fontSize(11)
        .text("BEASISWA PENGEMBANGAN SUMBER DAYA MANUSIA", 180, 45, { align: 'center', width: 365 })
        .text("PERKEBUNAN KELAPA SAWIT", { align: 'center', width: 365 })
@@ -3578,11 +3506,13 @@ exports.downloadPdfHasilVerifikasi = async (req, res) => {
 
     doc.moveDown(2);
 
+    // Judul Dokumen
     doc.font('Helvetica-Bold').fontSize(12)
        .text("HASIL SELEKSI ADMINISTRASI", 50, doc.y, { align: 'center', width: 495 });
     
     doc.moveDown(1.5);
 
+    // 2. DATA DIRI (LAYOUT 2 KOLOM)
     doc.fontSize(9);
 
     const startX1 = 50;
@@ -3629,6 +3559,7 @@ exports.downloadPdfHasilVerifikasi = async (req, res) => {
     doc.moveDown(1.5);
     doc.x = 50; 
 
+    // 3. TABEL PERSYARATAN
     const tableData = [];
     let no = 1;
 
@@ -3636,20 +3567,26 @@ exports.downloadPdfHasilVerifikasi = async (req, res) => {
       dokList.forEach(dok => {
         let status = dok.status_verifikasi || "Belum Diverifikasi";
         
+        // 1. Ambil nama referensi dari master
         let namaFileRef = isKhusus ? mapRefKhusus[dok.id_ref_dokumen] : mapRefUmum[dok.id_ref_dokumen];
         
+        // 2. Ekstrak nama asli dan ekstensi (.jpg, .pdf) dari file yang diupload user
         let namaFileAsli = dok.file ? String(dok.file).split('/').pop() : "-";
         let ekstensiAsli = dok.file ? path.extname(dok.file) : ""; 
 
         let namaFinal = "-";
 
         if (namaFileRef) {
+          // Cek apakah admin sudah mengisi ekstensinya di database master
           if (!namaFileRef.includes('.')) {
+            // Jika master belum ada titik (ekstensi), gabungkan dengan ekstensi file asli yang diupload user
             namaFinal = `${namaFileRef}${ekstensiAsli}`;
           } else {
+            // Jika di master sudah ditulis lengkap misal "template.pdf"
             namaFinal = namaFileRef;
           }
         } else {
+          // Jika master kosong, gunakan nama file asli
           namaFinal = namaFileAsli;
         }
         
@@ -3687,6 +3624,7 @@ exports.downloadPdfHasilVerifikasi = async (req, res) => {
       }
     });
 
+    // 4. FOOTER
     doc.moveDown(2);
     const dateStr = new Date().toLocaleDateString('id-ID', { 
       day: 'numeric', month: 'long', year: 'numeric',
@@ -3705,6 +3643,116 @@ exports.downloadPdfHasilVerifikasi = async (req, res) => {
     }
   }
 };
+
+const addHasilSeleksiPdfToArchive = async (archive, data, folderPrefix, mapRefUmum, mapRefKhusus) => {
+  try {
+    const idTrxBeasiswa = data.id_trx_beasiswa;
+    const kodePendaftaran = data.kode_pendaftaran || "Tanpa-No";
+
+    // Ambil data dokumen pendaftar
+    const dokUmum = await TrxDokumenUmum.findAll({ where: { id_trx_beasiswa } });
+    const dokKhusus = await TrxDokumenKhusus.findAll({ where: { id_trx_beasiswa } });
+
+    const doc = new PDFDocument({ 
+      margins: { top: 50, bottom: 50, left: 50, right: 50 }, 
+      size: 'A4' 
+    });
+
+    // === FIX: Masukkan PDF ke ZIP sejak awal agar stream tertangkap sempurna ===
+    archive.append(doc, { name: `${folderPrefix}/${kodePendaftaran} - Hasil Seleksi Administrasi.pdf` });
+
+    // 1. KOP SURAT / HEADER
+    const logoPath = path.join(__dirname, '../../../assets/Ditjenbun.png');
+    if (fs.existsSync(logoPath)) {
+      doc.image(logoPath, 50, 40, { width: 120 });
+    } else {
+      doc.rect(50, 40, 120, 50).dash(5, {space: 5}).stroke(); 
+      doc.undash();
+    }
+
+    doc.font('Helvetica-Bold').fontSize(11)
+       .text("BEASISWA PENGEMBANGAN SUMBER DAYA MANUSIA", 180, 45, { align: 'center', width: 365 })
+       .text("PERKEBUNAN KELAPA SAWIT", { align: 'center', width: 365 })
+       .text("2026", { align: 'center', width: 365 });
+
+    doc.moveDown(2);
+    doc.font('Helvetica-Bold').fontSize(12)
+       .text("HASIL SELEKSI ADMINISTRASI", 50, doc.y, { align: 'center', width: 495 });
+    
+    doc.moveDown(1.5);
+
+    // 2. DATA DIRI
+    doc.fontSize(9);
+    const startX1 = 50, col1ValX = 160, col1ValW = 140;
+    const startX2 = 310, col2ValX = 410, col2ValW = 135;
+
+    const printRow2Col = (label1, val1, label2, val2) => {
+      const y = doc.y;
+      const h1 = doc.heightOfString(val1 || '-', {width: col1ValW});
+      const h2 = label2 ? doc.heightOfString(val2 || '-', {width: col2ValW}) : 0;
+      const maxH = Math.max(h1, h2, 10);
+
+      doc.font('Helvetica-Bold').text(label1, startX1, y, { width: 100 });
+      doc.text(':', col1ValX - 10, y, { width: 10, align: 'center' });
+      doc.font('Helvetica').text(val1 || '-', col1ValX, y, { width: col1ValW });
+
+      if (label2) {
+        doc.font('Helvetica-Bold').text(label2, startX2, y, { width: 90 });
+        doc.text(':', col2ValX - 10, y, { width: 10, align: 'center' });
+        doc.font('Helvetica').text(val2 || '-', col2ValX, y, { width: col2ValW });
+      }
+      doc.y = y + maxH + 5; 
+    };
+
+    printRow2Col("Kode Pendaftar", data.kode_pendaftaran, "Nama Ayah", data.ayah_nama);
+    printRow2Col("Nama Pendaftar", data.nama_lengkap, "No. Telepon Ayah", data.ayah_no_hp);
+    printRow2Col("NIK", data.nik, "Nama Ibu", data.ibu_nama);
+    printRow2Col("Periode", data.nama_beasiswa, "No. Telepon Ibu", data.ibu_no_hp);
+    printRow2Col("Kategori", data.jalur, null, null);
+    printRow2Col("Nomor Telepon", data.no_hp, null, null);
+    printRow2Col("Alamat KTP", data.tinggal_alamat, null, null);
+    printRow2Col("Alamat Kerja", data.kerja_alamat, null, null);
+
+    doc.moveDown(1.5);
+
+    // 3. TABEL
+    const tableData = [];
+    let no = 1;
+    const processRows = (list, isKhusus) => {
+      list.forEach(dok => {
+        let status = (dok.status_verifikasi || "Belum Diverifikasi").toUpperCase();
+        let refName = isKhusus ? mapRefKhusus[dok.id_ref_dokumen] : mapRefUmum[dok.id_ref_dokumen];
+        let ext = path.extname(dok.file || "");
+        let nameFinal = refName ? (refName.includes('.') ? refName : `${refName}${ext}`) : (dok.file ? String(dok.file).split('/').pop() : "-");
+        tableData.push([String(no++), dok.nama_dokumen_persyaratan || "-", nameFinal, status]);
+      });
+    };
+    processRows(dokUmum, false);
+    processRows(dokKhusus, true);
+
+    await doc.table({
+      headers: [
+        { label: "No.", property: "no", width: 25 }, 
+        { label: "Syarat", property: "s", width: 260 }, 
+        { label: "Dokumen", property: "d", width: 130 }, 
+        { label: "Hasil", property: "h", width: 80 }
+      ],
+      rows: tableData
+    }, { x: 50, width: 495, prepareHeader: () => doc.font("Helvetica-Bold").fontSize(9), prepareRow: () => doc.font("Helvetica").fontSize(8), padding: 5 });
+
+    // 4. FOOTER
+    doc.moveDown(2);
+    const dateStr = new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    doc.font('Helvetica-Oblique').fontSize(8).text(`Dicetak secara otomatis pada: ${dateStr} WIB`, 50, doc.y, { align: "left" });
+
+    // Selesaikan PDF
+    doc.end();
+
+  } catch (err) {
+    console.error("[ZIP-PDF-Error]", err);
+  }
+};
+
 
 exports.checkNikDuplikat = async (req, res) => {
   try {
@@ -3732,3 +3780,4 @@ exports.checkNikDuplikat = async (req, res) => {
     return errorResponse(res, "Internal Server Error");
   }
 };
+
