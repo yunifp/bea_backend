@@ -76,14 +76,16 @@ exports.getDetailPenetapan = async (req, res) => {
       order: [["urutan_ranking", "ASC"]],
     });
 
-    // ✅ PERBAIKAN: Format data agar file rekomtek menjadi URL S3 yang utuh
-    const mappedRows = rows.map(row => {
-      const r = row.toJSON();
-      if (r.file_rekomendasi_teknis) {
-        r.file_rekomendasi_teknis = getFileUrl(req, "rekomtek", r.file_rekomendasi_teknis);
-      }
-      return r;
-    });
+    // ✅ PERBAIKAN: Gunakan Promise.all dan AWAIT untuk setiap URL
+    const mappedRows = await Promise.all(
+      rows.map(async (row) => {
+        const r = row.toJSON();
+        if (r.file_rekomendasi_teknis) {
+          r.file_rekomendasi_teknis = await getFileUrl(req, "rekomtek", r.file_rekomendasi_teknis);
+        }
+        return r;
+      })
+    );
 
     return successResponse(res, "Data detail penetapan dimuat", {
       result: mappedRows,
@@ -107,9 +109,9 @@ exports.cekDokumenPenetapan = async (req, res) => {
       attributes: ["file_rekomendasi_teknis"]
     });
 
-    // ✅ PERBAIKAN: Berikan URL utuh dari NEO S3
+    // ✅ PERBAIKAN: Tambahkan await pada getFileUrl
     const fileUrl = data && data.file_rekomendasi_teknis 
-      ? getFileUrl(req, "rekomtek", data.file_rekomendasi_teknis) 
+      ? await getFileUrl(req, "rekomtek", data.file_rekomendasi_teknis) 
       : null;
 
     return successResponse(res, "Status dokumen penetapan", {

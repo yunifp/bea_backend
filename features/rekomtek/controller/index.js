@@ -379,8 +379,9 @@ exports.cekDokumenRekomtek = async (req, res) => {
       attributes: ["file_rekomendasi_teknis"]
     });
     
+    // ✅ Tambahkan await pada getFileUrl
     const fileUrl = data && data.file_rekomendasi_teknis 
-      ? getFileUrl(req, "rekomtek", data.file_rekomendasi_teknis) 
+      ? await getFileUrl(req, "rekomtek", data.file_rekomendasi_teknis) 
       : null;
 
     return successResponse(res, "Status dokumen", { 
